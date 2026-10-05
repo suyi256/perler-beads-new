@@ -34,6 +34,13 @@ export interface MappedPixel {
   isExternal?: boolean;
 }
 
+// 最小结构的图像数据：浏览器 ImageData 与测试用的普通对象均可赋值
+export interface RawImageData {
+  width: number;
+  height: number;
+  data: Uint8ClampedArray;
+}
+
 // --- 辅助函数 ---
 
 // 转换 Hex 到 RGB
@@ -138,7 +145,7 @@ export function findClosestPaletteColor(
  * @returns 代表色的 RGB 对象，或 null（如果区域无效或全透明）
  */
 function calculateCellRepresentativeColor(
-    imageData: ImageData,
+    imageData: RawImageData,
     startX: number,
     startY: number,
     width: number,
@@ -226,7 +233,7 @@ function calculateCellRepresentativeColor(
  * @returns 计算后的 MappedPixel 网格数据
  */
 export function calculatePixelGrid(
-    fullImageData: ImageData,
+    fullImageData: RawImageData,
     imgWidth: number,
     imgHeight: number,
     N: number,

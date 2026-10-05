@@ -195,3 +195,65 @@ export function cleanupSmallIslands(
   console.log(`杂色清理：共吸收 ${mergedCount} 个面积小于 ${minIslandSize} 的孤立色块`);
   return working;
 }
+
+/**
+ * 边缘平滑（众数滤波）：某格若 8 邻域中 ≥ minNeighborCount 格同为另一颜色，
+ * 则该格翻转为该颜色。用于清除沿轮廓的连片毛边和锯齿凸起。
+ * 注意：被单格细节（如眼睛高光）周围的强主色包围时也会被翻转，
+ * 因此由用户通过开关控制，不默认启用。
+ */
+export function smoothEdges(
+  pixelData: MappedPixel[][],
+  passes: number = 1,
+  minNeighborCount: number = 5
+): MappedPixel[][] {
+  let current = pixelData;
+  for (let p = 0; p < passes; p++) {
+    const next = current.map(row => row.map(cell => ({ ...cell })));
+    const M = current.length;
+    const N = M > 0 ? current[0].length : 0;
+
+    for (let r = 0; r < M; r++) {
+      for (let c = 0; c < N; c++) {
+        const cell = current[r][c];
+        if (!isValidCell(cell)) continue;
+
+        // 统计 8 邻域各颜色出现次数（读取上一轮结果，同步更新避免方向偏差）
+        const counts = new Map<string, { count: number; color: string }>();
+        for (let dr = -1; dr <= 1; dr++) {
+          for (let dc = -1; dc <= 1; dc++) {
+            if (dr === 0 && dc === 0) continue;
+            const nr = r + dr;
+            const nc = c + dc;
+            if (nr < 0 || nr >= M || nc < 0 || nc >= N) continue;
+            const neighbor = current[nr][nc];
+            if (!isValidCell(neighbor)) continue;
+            const entry = counts.get(neighbor.key);
+            if (entry) {
+              entry.count++;
+            } else {
+              counts.set(neighbor.key, { count: 1, color: neighbor.color });
+            }
+          }
+        }
+
+        let bestKey: string | null = null;
+        let bestCount = 0;
+        let bestColor = '';
+        for (const [key, value] of counts) {
+          if (value.count > bestCount) {
+            bestKey = key;
+            bestCount = value.count;
+            bestColor = value.color;
+          }
+        }
+
+        if (bestKey && bestKey !== cell.key && bestCount >= minNeighborCount) {
+          next[r][c] = { key: bestKey, color: bestColor, isExternal: false };
+        }
+      }
+    }
+    current = next;
+  }
+  return current;
+}

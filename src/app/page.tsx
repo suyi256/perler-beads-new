@@ -11,6 +11,7 @@ import {
   RgbColor,
   PaletteColor,
   MappedPixel,
+  RawImageData,
   hexToRgb,
   colorDistance,
   findClosestPaletteColor
@@ -92,7 +93,8 @@ import MagnifierTool from '../components/MagnifierTool';
 import MagnifierSelectionOverlay from '../components/MagnifierSelectionOverlay';
 import { loadPaletteSelections, savePaletteSelections, presetToSelections, PaletteSelections } from '../utils/localStorageUtils';
 import { TRANSPARENT_KEY, transparentColorData, recalculateColorStats } from '../utils/pixelEditingUtils';
-import { cleanupSmallIslands, getIslandAt, getDominantNeighborColor, absorbIsland } from '../utils/spatialCleanup';
+import { cleanupSmallIslands, getIslandAt, getDominantNeighborColor, absorbIsland, smoothEdges } from '../utils/spatialCleanup';
+import { cropToContent } from '../utils/imageCropUtils';
 
 // 1. 导入新的 DonationModal 组件
 import DonationModal from '../components/DonationModal';
@@ -107,6 +109,10 @@ export default function Home() {
   // 新增：杂色清理强度（吸收面积小于该值的孤立色块，0 为关闭）
   const [cleanupStrength, setCleanupStrength] = useState<number>(2);
   const [cleanupStrengthInput, setCleanupStrengthInput] = useState<string>("2");
+  // 新增：自动裁剪空白边缘（提升主体有效分辨率）
+  const [autoCropEnabled, setAutoCropEnabled] = useState<boolean>(true);
+  // 新增：边缘平滑（清除轮廓连片毛边，可能影响单格细节，默认关闭）
+  const [edgeSmoothingEnabled, setEdgeSmoothingEnabled] = useState<boolean>(false);
   // 添加像素化模式状态
   const [pixelationMode, setPixelationMode] = useState<PixelationMode>(PixelationMode.Dominant); // 默认为卡通模式
   
@@ -810,6 +816,22 @@ export default function Home() {
     setCleanupStrengthInput(event.target.value);
   };
 
+  // 自动裁剪开关：切换后触发重新生成
+  const handleAutoCropToggle = () => {
+    setAutoCropEnabled(prev => !prev);
+    setRemapTrigger(prev => prev + 1);
+    setIsManualColoringMode(false);
+    setSelectedColor(null);
+  };
+
+  // 边缘平滑开关：切换后触发重新生成
+  const handleEdgeSmoothingToggle = () => {
+    setEdgeSmoothingEnabled(prev => !prev);
+    setRemapTrigger(prev => prev + 1);
+    setIsManualColoringMode(false);
+    setSelectedColor(null);
+  };
+
   // ++ 修改：处理确认按钮点击的函数，同时处理两个参数 ++
   const handleConfirmParameters = () => {    // 处理格子数
     const minGranularity = 10;
@@ -896,7 +918,7 @@ export default function Home() {
   };
 
   // 修改pixelateImage函数接收模式参数
-  const pixelateImage = (imageSrc: string, detailLevel: number, threshold: number, currentPalette: PaletteColor[], mode: PixelationMode, cleanupLevel: number) => {
+  const pixelateImage = (imageSrc: string, detailLevel: number, threshold: number, currentPalette: PaletteColor[], mode: PixelationMode, cleanupLevel: number, autoCrop: boolean, edgeSmooth: boolean) => {
     const originalCanvas = originalCanvasRef.current;
     const pixelatedCanvas = pixelatedCanvasRef.current;
 
@@ -936,10 +958,42 @@ export default function Home() {
     };
     
     img.onload = () => {
-      const aspectRatio = img.height / img.width;
       const N = detailLevel;
+
+      // 绘制原图到参考画布
+      originalCanvas.width = img.width; originalCanvas.height = img.height;
+      originalCtx.drawImage(img, 0, 0, img.width, img.height);
+
+      // ImageData 按源图缓存，调参重跑时避免重复读取像素
+      let fullImageData: ImageData;
+      if (imageDataCacheRef.current && imageDataCacheRef.current.src === imageSrc) {
+          fullImageData = imageDataCacheRef.current.data;
+      } else {
+          fullImageData = originalCtx.getImageData(0, 0, img.width, img.height);
+          if (img.width * img.height <= 4000000) {
+              imageDataCacheRef.current = { src: imageSrc, data: fullImageData };
+          } else {
+              imageDataCacheRef.current = null;
+          }
+      }
+
+      // 自动裁剪空白边缘：让主体撑满网格，提升有效分辨率
+      let sourceData: RawImageData = fullImageData;
+      let sourceWidth = img.width;
+      let sourceHeight = img.height;
+      if (autoCrop) {
+          const crop = cropToContent(fullImageData);
+          if (crop) {
+              sourceData = crop.imageData;
+              sourceWidth = crop.width;
+              sourceHeight = crop.height;
+              showToast('已自动裁剪空白边缘');
+          }
+      }
+
+      const aspectRatio = sourceHeight / sourceWidth;
       const M = Math.max(1, Math.round(N * aspectRatio));
-      if (N <= 0 || M <= 0) { console.error("Invalid grid dimensions:", { N, M }); return; }
+      if (N <= 0 || M <= 0) { console.error("Invalid grid dimensions:", { N, M }); setIsProcessing(false); return; }
 
       // 动态调整画布尺寸：当格子数量大于100时，增加画布尺寸以保持每个格子的可见性
       const baseWidth = 500;
@@ -963,31 +1017,13 @@ export default function Home() {
       }
       
       const outputHeight = Math.round(outputWidth * aspectRatio);
-      
-      // 在控制台提示用户画布尺寸变化
-      if (N > 100) {
-      }
-      originalCanvas.width = img.width; originalCanvas.height = img.height;
       pixelatedCanvas.width = outputWidth; pixelatedCanvas.height = outputHeight;
 
-      originalCtx.drawImage(img, 0, 0, img.width, img.height);
-
-      // 1. 使用calculatePixelGrid进行初始颜色映射（ImageData 按源图缓存）
-      let fullImageData: ImageData;
-      if (imageDataCacheRef.current && imageDataCacheRef.current.src === imageSrc) {
-          fullImageData = imageDataCacheRef.current.data;
-      } else {
-          fullImageData = originalCtx.getImageData(0, 0, img.width, img.height);
-          if (img.width * img.height <= 4000000) {
-              imageDataCacheRef.current = { src: imageSrc, data: fullImageData };
-          } else {
-              imageDataCacheRef.current = null;
-          }
-      }
+      // 1. 使用calculatePixelGrid进行初始颜色映射（数据源为自动裁剪后的图像）
       const initialMappedData = calculatePixelGrid(
-          fullImageData,
-          img.width,
-          img.height,
+          sourceData,
+          sourceWidth,
+          sourceHeight,
           N,
           M,
           currentPalette,
@@ -1101,6 +1137,11 @@ export default function Home() {
         finalData = cleanupSmallIslands(mergedData, cleanupLevel);
       }
 
+      // --- 边缘平滑：清除沿轮廓的连片毛边与锯齿 ---
+      if (edgeSmooth) {
+        finalData = smoothEdges(finalData, 1);
+      }
+
       // --- 绘制和状态更新 ---
       if (pixelatedCanvasRef.current) {
         setMappedPixelData(finalData);
@@ -1147,7 +1188,7 @@ export default function Home() {
        setIsProcessing(true);
        const timeoutId = setTimeout(() => {
          if (originalImageSrc && originalCanvasRef.current && pixelatedCanvasRef.current && activeBeadPalette.length > 0) {
-           pixelateImage(originalImageSrc, granularity, similarityThreshold, activeBeadPalette, pixelationMode, cleanupStrength);
+           pixelateImage(originalImageSrc, granularity, similarityThreshold, activeBeadPalette, pixelationMode, cleanupStrength, autoCropEnabled, edgeSmoothingEnabled);
          } else {
             console.warn("useEffect check failed inside timeout: Refs or active palette not ready/empty.");
             setIsProcessing(false);
@@ -1168,12 +1209,13 @@ export default function Home() {
         }
         setMappedPixelData(null);
         setGridDimensions(null);
+        setIsProcessing(false);
         // Keep colorCounts to allow user to un-exclude colors
         // setColorCounts(null);
         // setTotalBeadCount(0);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [originalImageSrc, granularity, similarityThreshold, customPaletteSelections, pixelationMode, cleanupStrength, remapTrigger]);
+  }, [originalImageSrc, granularity, similarityThreshold, customPaletteSelections, pixelationMode, cleanupStrength, autoCropEnabled, edgeSmoothingEnabled, remapTrigger]);
 
   // 确保文件输入框引用在组件挂载后正确设置
   useEffect(() => {
@@ -1282,7 +1324,7 @@ export default function Home() {
             });
 
             // 4. 基于剩余的hex值创建重映射调色板
-            const remapTargetPalette = fullBeadPalette.filter(color => potentialRemapHexKeys.has(color.hex.toUpperCase()));
+            const remapTargetPalette = fullBeadPalette.filter(color => potentialRemapHexKeys.has(color.hex.toUpperCase()));
 
             // 5. *** 关键检查 ***：如果在考虑所有排除项后，没有*初始*颜色可供映射，则阻止此次排除
             if (remapTargetPalette.length === 0) {
@@ -1301,7 +1343,7 @@ export default function Home() {
              }
 
             // 仅在需要重映射时创建深拷贝
-            const newMappedData = mappedPixelData.map(row => row.map(cell => ({...cell})));
+            const newMappedData = mappedPixelData.map(row => row.map(cell => ({...cell})));
             const { N, M } = gridDimensions;
             let firstReplacementHex: string | null = null;
 
@@ -2508,6 +2550,31 @@ export default function Home() {
                     </div>
                 </div>
 
+                {/* 生成选项开关 */}
+                <div className="sm:col-span-2 flex flex-wrap items-center gap-x-5 gap-y-2">
+                  <label className="flex items-center gap-2 text-xs sm:text-sm text-gray-700 dark:text-gray-300 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={autoCropEnabled}
+                      onChange={handleAutoCropToggle}
+                      className="w-4 h-4 accent-blue-500"
+                    />
+                    自动裁剪空白边缘
+                  </label>
+                  <label
+                    className="flex items-center gap-2 text-xs sm:text-sm text-gray-700 dark:text-gray-300 cursor-pointer select-none"
+                    title="清除沿轮廓的连片毛边与锯齿；注意可能影响单格细节（如眼睛高光）"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={edgeSmoothingEnabled}
+                      onChange={handleEdgeSmoothingToggle}
+                      className="w-4 h-4 accent-violet-500"
+                    />
+                    边缘平滑
+                  </label>
+                </div>
+
                 {/* 快捷按钮 */}
                 <div className="sm:col-span-2 flex flex-wrap items-center gap-2">
                   <button
@@ -3003,7 +3070,7 @@ export default function Home() {
 
       {/* 图片处理中提示 */}
       {isProcessing && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 backdrop-blur-sm">
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40">
           <div className="flex flex-col items-center gap-3 bg-white dark:bg-gray-800 px-6 py-5 rounded-xl shadow-2xl">
             <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
             <span className="text-sm font-medium text-gray-700 dark:text-gray-200">正在处理图片…</span>

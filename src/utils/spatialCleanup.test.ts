@@ -3,7 +3,8 @@ import {
   getIslandAt,
   getDominantNeighborColor,
   absorbIsland,
-  cleanupSmallIslands
+  cleanupSmallIslands,
+  smoothEdges
 } from './spatialCleanup';
 import { MappedPixel } from './pixelation';
 import { TRANSPARENT_KEY, transparentColorData } from './pixelEditingUtils';
@@ -128,5 +129,49 @@ describe('cleanupSmallIslands', () => {
     const next = cleanupSmallIslands(g, 5);
     expect(next[0][1].key).toBe('A');
     expect(next[0][0].key).toBe(TRANSPARENT_KEY);
+  });
+});
+
+describe('smoothEdges', () => {
+  it('翻转被强主色包围的杂色格', () => {
+    const g = grid([
+      'BBB',
+      'BAB',
+      'BBB'
+    ]);
+    const next = smoothEdges(g, 1);
+    expect(next[1][1].key).toBe('B'); // 8 邻域全为 B
+  });
+
+  it('不翻转周围支持不足的格子（保留边界）', () => {
+    const g = grid([
+      'AAB',
+      'AAB',
+      'AAB'
+    ]);
+    const next = smoothEdges(g, 1);
+    // (0,1) 的邻域：A×4（左、下左、下、下右），B×1（右）→ A 不足 5，B 更少，保持 B
+    expect(next[0][2].key).toBe('B');
+    expect(next[1][2].key).toBe('B');
+  });
+
+  it('不修改入参', () => {
+    const g = grid([
+      'BBB',
+      'BAB',
+      'BBB'
+    ]);
+    smoothEdges(g, 1);
+    expect(g[1][1].key).toBe('A');
+  });
+
+  it('透明格子不参与也不被翻转', () => {
+    const g = grid([
+      'BBB',
+      'B.B',
+      'BBB'
+    ]);
+    const next = smoothEdges(g, 1);
+    expect(next[1][1].key).toBe(TRANSPARENT_KEY);
   });
 });
