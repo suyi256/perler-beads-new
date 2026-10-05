@@ -47,14 +47,14 @@ const DonationModal: React.FC<DonationModalProps> = ({ isOpen, onClose }) => {
               <div className="relative w-40 h-40 sm:w-48 sm:h-48 md:w-56 md:h-56 p-1 sm:p-2 bg-gradient-to-r from-pink-100 to-rose-100 dark:from-pink-900/30 dark:to-rose-900/30 rounded-lg shadow-md">
                 <Image
                   src="/donation-qr.jpg"
-                  alt="赞赏码"
+                  alt="微信收款码"
                   fill
                   className="object-contain p-1 sm:p-2"
                 />
               </div>
             </div>
             <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-300 bg-gray-50 dark:bg-gray-700 py-1.5 px-3 sm:py-2 sm:px-4 rounded-full inline-block shadow-sm">
-              微信扫描上方赞赏码，请作者喝一杯奶茶。
+              微信扫描上方二维码，请作者喝一杯奶茶。
             </p>
           </div>
         </div>
