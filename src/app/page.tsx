@@ -92,6 +92,7 @@ import MagnifierTool from '../components/MagnifierTool';
 import MagnifierSelectionOverlay from '../components/MagnifierSelectionOverlay';
 import { loadPaletteSelections, savePaletteSelections, presetToSelections, PaletteSelections } from '../utils/localStorageUtils';
 import { TRANSPARENT_KEY, transparentColorData } from '../utils/pixelEditingUtils';
+import { cleanupSmallIslands, getIslandAt, getDominantNeighborColor, absorbIsland } from '../utils/spatialCleanup';
 
 // 1. 导入新的 DonationModal 组件
 import DonationModal from '../components/DonationModal';
@@ -103,6 +104,9 @@ export default function Home() {
   const [granularityInput, setGranularityInput] = useState<string>("50");
   const [similarityThreshold, setSimilarityThreshold] = useState<number>(30);
   const [similarityThresholdInput, setSimilarityThresholdInput] = useState<string>("30");
+  // 新增：杂色清理强度（吸收面积小于该值的孤立色块，0 为关闭）
+  const [cleanupStrength, setCleanupStrength] = useState<number>(2);
+  const [cleanupStrengthInput, setCleanupStrengthInput] = useState<string>("2");
   // 添加像素化模式状态
   const [pixelationMode, setPixelationMode] = useState<PixelationMode>(PixelationMode.Dominant); // 默认为卡通模式
   
@@ -127,6 +131,8 @@ export default function Home() {
   const [selectedColor, setSelectedColor] = useState<MappedPixel | null>(null);
   // 新增：一键擦除模式状态
   const [isEraseMode, setIsEraseMode] = useState<boolean>(false);
+  // 新增：点选清理模式状态（点击孤立色块吸收到邻接主色）
+  const [isIslandCleanMode, setIsIslandCleanMode] = useState<boolean>(false);
   // 新增状态变量：控制打赏弹窗
   const [isDonationModalOpen, setIsDonationModalOpen] = useState<boolean>(false);
   const [customPaletteSelections, setCustomPaletteSelections] = useState<PaletteSelections>({});
@@ -195,6 +201,9 @@ export default function Home() {
 
   // 新增：一键去背景撤回快照（单步）
   const [bgRemovalSnapshot, setBgRemovalSnapshot] = useState<EditSnapshot | null>(null);
+
+  // 新增：一键清理杂色撤回快照（单步）
+  const [cleanupSnapshot, setCleanupSnapshot] = useState<EditSnapshot | null>(null);
 
   // 新增：轻量提示
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -651,6 +660,7 @@ export default function Home() {
           setIsManualColoringMode(false);
           setSelectedColor(null);
           setIsEraseMode(false);
+          setIsIslandCleanMode(false);
           
           // 设置格子数量为导入的尺寸，避免重新映射时尺寸被修改
           setGranularity(gridDimensions.N);
@@ -734,9 +744,34 @@ export default function Home() {
     }
     
     setIsEraseMode(!isEraseMode);
-    // 如果开启擦除模式，取消选中的颜色
+    // 如果开启擦除模式，取消选中的颜色，并退出点选清理模式
     if (!isEraseMode) {
       setSelectedColor(null);
+      setIsIslandCleanMode(false);
+    }
+  };
+
+  // 新增：点选清理模式切换处理
+  const handleIslandCleanToggle = () => {
+    // 确保在手动上色模式下才能使用
+    if (!isManualColoringMode) {
+      return;
+    }
+
+    // 如果当前在颜色替换模式，先退出替换模式
+    if (colorReplaceState.isActive) {
+      setColorReplaceState({
+        isActive: false,
+        step: 'select-source'
+      });
+      setHighlightColorKey(null);
+    }
+
+    setIsIslandCleanMode(!isIslandCleanMode);
+    // 如果开启点选清理模式，取消选中的颜色，并退出擦除模式
+    if (!isIslandCleanMode) {
+      setSelectedColor(null);
+      setIsEraseMode(false);
     }
   };
 
@@ -748,6 +783,11 @@ export default function Home() {
   // ++ 添加：处理相似度输入框变化的函数 ++
   const handleSimilarityThresholdInputChange = (event: ChangeEvent<HTMLInputElement>) => {
     setSimilarityThresholdInput(event.target.value);
+  };
+
+  // 新增：处理清理强度输入变化的函数
+  const handleCleanupStrengthInputChange = (event: ChangeEvent<HTMLInputElement>) => {
+    setCleanupStrengthInput(event.target.value);
   };
 
   // ++ 修改：处理确认按钮点击的函数，同时处理两个参数 ++
@@ -767,16 +807,28 @@ export default function Home() {
     const minSimilarity = 0;
     const maxSimilarity = 100;
     let newSimilarity = parseInt(similarityThresholdInput, 10);
-    
+
     if (isNaN(newSimilarity) || newSimilarity < minSimilarity) {
       newSimilarity = minSimilarity;
     } else if (newSimilarity > maxSimilarity) {
       newSimilarity = maxSimilarity;
     }
 
+    // 处理杂色清理强度
+    const minCleanup = 0;
+    const maxCleanup = 10;
+    let newCleanupStrength = parseInt(cleanupStrengthInput, 10);
+
+    if (isNaN(newCleanupStrength) || newCleanupStrength < minCleanup) {
+      newCleanupStrength = minCleanup;
+    } else if (newCleanupStrength > maxCleanup) {
+      newCleanupStrength = maxCleanup;
+    }
+
     // 检查值是否有变化
     const granularityChanged = newGranularity !== granularity;
     const similarityChanged = newSimilarity !== similarityThreshold;
+    const cleanupChanged = newCleanupStrength !== cleanupStrength;
     
     if (granularityChanged) {
       console.log(`Confirming new granularity: ${newGranularity}`);
@@ -787,9 +839,14 @@ export default function Home() {
       console.log(`Confirming new similarity threshold: ${newSimilarity}`);
       setSimilarityThreshold(newSimilarity);
     }
-    
+
+    if (cleanupChanged) {
+      console.log(`Confirming new cleanup strength: ${newCleanupStrength}`);
+      setCleanupStrength(newCleanupStrength);
+    }
+
     // 只有在有值变化时才触发重映射
-    if (granularityChanged || similarityChanged) {
+    if (granularityChanged || similarityChanged || cleanupChanged) {
       setRemapTrigger(prev => prev + 1);
       // 退出手动上色模式
       setIsManualColoringMode(false);
@@ -799,6 +856,7 @@ export default function Home() {
     // 始终同步输入框的值
     setGranularityInput(newGranularity.toString());
     setSimilarityThresholdInput(newSimilarity.toString());
+    setCleanupStrengthInput(newCleanupStrength.toString());
   };
 
   // 添加像素化模式切换处理函数
@@ -815,8 +873,8 @@ export default function Home() {
   };
 
   // 修改pixelateImage函数接收模式参数
-  const pixelateImage = (imageSrc: string, detailLevel: number, threshold: number, currentPalette: PaletteColor[], mode: PixelationMode) => {
-    console.log(`Attempting to pixelate with detail: ${detailLevel}, threshold: ${threshold}, mode: ${mode}`);
+  const pixelateImage = (imageSrc: string, detailLevel: number, threshold: number, currentPalette: PaletteColor[], mode: PixelationMode, cleanupLevel: number) => {
+    console.log(`Attempting to pixelate with detail: ${detailLevel}, threshold: ${threshold}, mode: ${mode}, cleanup: ${cleanupLevel}`);
     const originalCanvas = originalCanvasRef.current;
     const pixelatedCanvas = pixelatedCanvasRef.current;
 
@@ -1013,14 +1071,20 @@ export default function Home() {
       }
       // --- 结束新的全局颜色合并逻辑 ---
 
+      // --- 杂色清理：吸收面积小于清理强度的孤立色块 ---
+      let finalData = mergedData;
+      if (cleanupLevel >= 1) {
+        finalData = cleanupSmallIslands(mergedData, cleanupLevel);
+      }
+
       // --- 绘制和状态更新 ---
       if (pixelatedCanvasRef.current) {
-        setMappedPixelData(mergedData);
+        setMappedPixelData(finalData);
         setGridDimensions({ N, M });
 
         const counts: { [key: string]: { count: number; color: string } } = {};
         let totalCount = 0;
-        mergedData.flat().forEach(cell => {
+        finalData.flat().forEach(cell => {
           if (cell && cell.key && !cell.isExternal) {
             // 使用hex值作为统计键值，而不是色号
             const hexKey = cell.color;
@@ -1052,6 +1116,7 @@ export default function Home() {
   useEffect(() => {
     clearEditHistory();
     setBgRemovalSnapshot(null);
+    setCleanupSnapshot(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [remapTrigger]);
 
@@ -1061,7 +1126,7 @@ export default function Home() {
        const timeoutId = setTimeout(() => {
          if (originalImageSrc && originalCanvasRef.current && pixelatedCanvasRef.current && activeBeadPalette.length > 0) {
            console.log("useEffect triggered: Processing image due to src, granularity, threshold, palette selection, mode or remap trigger.");
-           pixelateImage(originalImageSrc, granularity, similarityThreshold, activeBeadPalette, pixelationMode);
+           pixelateImage(originalImageSrc, granularity, similarityThreshold, activeBeadPalette, pixelationMode, cleanupStrength);
          } else {
             console.warn("useEffect check failed inside timeout: Refs or active palette not ready/empty.");
          }
@@ -1086,7 +1151,7 @@ export default function Home() {
         // setTotalBeadCount(0);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [originalImageSrc, granularity, similarityThreshold, customPaletteSelections, pixelationMode, remapTrigger]);
+  }, [originalImageSrc, granularity, similarityThreshold, customPaletteSelections, pixelationMode, cleanupStrength, remapTrigger]);
 
   // 确保文件输入框引用在组件挂载后正确设置
   useEffect(() => {
@@ -1410,6 +1475,62 @@ export default function Home() {
     setInitialGridColorKeys(new Set(Object.keys(newColorCounts)));
   };
 
+  // 一键清理杂色：按当前清理强度吸收所有孤立小色块（支持单步撤回）
+  const handleCleanupNoise = () => {
+    if (!mappedPixelData || !gridDimensions || cleanupStrength < 1) return;
+
+    const cleanedData = cleanupSmallIslands(mappedPixelData, cleanupStrength);
+    // 检查是否有实际变化
+    const changed = cleanedData.some((row, r) =>
+      row.some((cell, c) => cell.key !== mappedPixelData[r][c].key)
+    );
+    if (!changed) {
+      showToast('没有需要清理的杂色');
+      return;
+    }
+
+    // 保存快照用于单步撤回
+    setCleanupSnapshot({
+      mappedPixelData,
+      colorCounts: colorCounts ? { ...colorCounts } : {},
+      totalBeadCount
+    });
+
+    setMappedPixelData(cleanedData);
+
+    // 重新计算颜色统计
+    const newColorCounts: { [hexKey: string]: { count: number; color: string } } = {};
+    let newTotalCount = 0;
+    cleanedData.flat().forEach(cell => {
+      if (cell && !cell.isExternal && cell.key !== TRANSPARENT_KEY) {
+        const cellHex = cell.color.toUpperCase();
+        if (!newColorCounts[cellHex]) {
+          newColorCounts[cellHex] = {
+            count: 0,
+            color: cellHex
+          };
+        }
+        newColorCounts[cellHex].count++;
+        newTotalCount++;
+      }
+    });
+
+    setColorCounts(newColorCounts);
+    setTotalBeadCount(newTotalCount);
+    setInitialGridColorKeys(new Set(Object.keys(newColorCounts)));
+    showToast(`已清理杂色（强度 ${cleanupStrength}）`);
+  };
+
+  // 一键清理杂色单步撤回
+  const handleUndoCleanup = useCallback(() => {
+    if (!cleanupSnapshot) return;
+    setMappedPixelData(cleanupSnapshot.mappedPixelData);
+    setColorCounts(cleanupSnapshot.colorCounts);
+    setTotalBeadCount(cleanupSnapshot.totalBeadCount);
+    setCleanupSnapshot(null);
+    showToast('已撤回杂色清理');
+  }, [cleanupSnapshot, showToast]);
+
   // --- Tooltip Logic ---
 
   // --- Canvas Interaction ---
@@ -1483,6 +1604,49 @@ export default function Home() {
     }
   };
 
+  // 点选清理：将点击位置所在的孤立同色色块整体吸收到邻接主色
+  const cleanupIslandAt = (row: number, col: number) => {
+    if (!mappedPixelData || !gridDimensions) return;
+
+    const island = getIslandAt(mappedPixelData, row, col);
+    if (!island) return;
+
+    const target = getDominantNeighborColor(mappedPixelData, island);
+    if (!target) {
+      showToast('该色块周围没有可吸收的颜色');
+      return;
+    }
+
+    // 保存快照用于撤回
+    saveEditSnapshot();
+    const newPixelData = absorbIsland(mappedPixelData, island, target);
+    setMappedPixelData(newPixelData);
+    showToast(`已清理 ${island.cells.length} 格杂色`);
+
+    // 重新计算颜色统计
+    if (colorCounts) {
+      const newColorCounts: { [hexKey: string]: { count: number; color: string } } = {};
+      let newTotalCount = 0;
+
+      newPixelData.flat().forEach(cell => {
+        if (cell && !cell.isExternal && cell.key !== TRANSPARENT_KEY) {
+          const cellHex = cell.color.toUpperCase();
+          if (!newColorCounts[cellHex]) {
+            newColorCounts[cellHex] = {
+              count: 0,
+              color: cellHex
+            };
+          }
+          newColorCounts[cellHex].count++;
+          newTotalCount++;
+        }
+      });
+
+      setColorCounts(newColorCounts);
+      setTotalBeadCount(newTotalCount);
+    }
+  };
+
   // ++ Re-introduce the combined interaction handler ++
   const handleCanvasInteraction = (
     clientX: number, 
@@ -1539,6 +1703,16 @@ export default function Home() {
           // 执行洪水填充擦除
           floodFillErase(j, i, cellData.key);
           setIsEraseMode(false); // 擦除完成后退出擦除模式
+          setTooltipData(null);
+        }
+        return;
+      }
+
+      // 点选清理模式逻辑（保持激活，可连续清理多个区域，用调色盘按钮退出）
+      if (isClick && isIslandCleanMode) {
+        if (cellData && !cellData.isExternal && cellData.key && cellData.key !== TRANSPARENT_KEY) {
+          // 执行孤立色块清理
+          cleanupIslandAt(j, i);
           setTooltipData(null);
         }
         return;
@@ -1694,6 +1868,7 @@ export default function Home() {
     setIsManualColoringMode(false);
     setSelectedColor(null);
     setIsEraseMode(false);
+    setIsIslandCleanMode(false);
   };
 
   // ++ 新增：导出自定义色板配置 ++
@@ -1829,11 +2004,14 @@ export default function Home() {
       setHighlightColorKey(null);
     }
     
-    // 选择任何颜色（包括橡皮擦）时，都应该退出一键擦除模式
+    // 选择任何颜色（包括橡皮擦）时，都应该退出一键擦除模式和点选清理模式
     if (isEraseMode) {
       setIsEraseMode(false);
     }
-    
+    if (isIslandCleanMode) {
+      setIsIslandCleanMode(false);
+    }
+
     // 设置选中的颜色
     setSelectedColor(colorData);
   };
@@ -1851,6 +2029,7 @@ export default function Home() {
         // 进入替换模式
         // 只退出冲突的模式，但保持在手动上色模式下
         setIsEraseMode(false);
+        setIsIslandCleanMode(false);
         setSelectedColor(null);
         return {
           isActive: true,
@@ -2313,6 +2492,24 @@ export default function Home() {
                     </div>
                 </div>
 
+                {/* Cleanup Strength Input */}
+                <div className="flex-1">
+                    <label htmlFor="cleanupStrengthInput" className="block text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5 sm:mb-2">
+                      杂色清理强度 (0-10, 0=关闭):
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        id="cleanupStrengthInput"
+                        value={cleanupStrengthInput}
+                        onChange={handleCleanupStrengthInputChange}
+                        className="w-full p-1.5 border border-gray-300 dark:border-gray-600 rounded-md text-sm focus:ring-blue-500 focus:border-blue-500 h-9 shadow-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-500"
+                        min="0"
+                        max="10"
+                      />
+                    </div>
+                </div>
+
                 {/* 快捷按钮 */}
                 <div className="sm:col-span-2 flex flex-wrap items-center gap-2">
                   <button
@@ -2327,6 +2524,21 @@ export default function Home() {
                     className="inline-flex items-center justify-center h-9 px-3 text-sm rounded-md border border-blue-200 dark:border-blue-700 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-200 hover:bg-blue-100 dark:hover:bg-blue-800/40 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
                   >
                     一键去背景
+                  </button>
+                  <button
+                    onClick={handleCleanupNoise}
+                    disabled={!mappedPixelData || !gridDimensions || cleanupStrength < 1}
+                    title={cleanupStrength < 1 ? '请先将清理强度设置为大于 0' : `吸收面积小于 ${cleanupStrength} 的孤立色块`}
+                    className="inline-flex items-center justify-center h-9 px-3 text-sm rounded-md border border-violet-200 dark:border-violet-700 bg-violet-50 dark:bg-violet-900/30 text-violet-700 dark:text-violet-200 hover:bg-violet-100 dark:hover:bg-violet-800/40 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                  >
+                    一键清理杂色
+                  </button>
+                  <button
+                    onClick={handleUndoCleanup}
+                    disabled={!cleanupSnapshot}
+                    className="inline-flex items-center justify-center h-9 px-3 text-sm rounded-md border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                  >
+                    回撤清理
                   </button>
                   <button
                     onClick={handleUndoBgRemoval}
@@ -2696,6 +2908,7 @@ export default function Home() {
           setSelectedColor(null);
           setTooltipData(null);
           setIsEraseMode(false);
+          setIsIslandCleanMode(false);
           setColorReplaceState({
             isActive: false,
             step: 'select-source'
@@ -2718,6 +2931,8 @@ export default function Home() {
           selectedColorSystem={selectedColorSystem}
           isEraseMode={isEraseMode}
           onEraseToggle={handleEraseToggle}
+          isIslandCleanMode={isIslandCleanMode}
+          onIslandCleanToggle={handleIslandCleanToggle}
           fullPaletteColors={fullPaletteColors}
           showFullPalette={showFullPalette}
           onToggleFullPalette={handleToggleFullPalette}

@@ -149,7 +149,10 @@ function calculateCellRepresentativeColor(
     const imgWidth = imageData.width;
     let rSum = 0, gSum = 0, bSum = 0;
     let pixelCount = 0;
-    const colorCountsInCell: { [key: string]: number } = {};
+    // Dominant 模式：按 16 级/通道量化分桶统计，桶内取均值。
+    // 照片/渐变图中单格像素色各异，直接按原始 RGB 统计“最高频”在并列时近乎随机，
+    // 相邻格子会映射到不同豆色产生盐椒噪声；量化后接近的像素色归入同一桶，选择即稳定。
+    const colorBins = new Map<number, { count: number; rSum: number; gSum: number; bSum: number }>();
     let dominantColorRgb: RgbColor | null = null;
     let maxCount = 0;
 
@@ -173,11 +176,23 @@ function calculateCellRepresentativeColor(
                 gSum += g;
                 bSum += b;
             } else { // Dominant mode
-                const colorKey = `${r},${g},${b}`;
-                colorCountsInCell[colorKey] = (colorCountsInCell[colorKey] || 0) + 1;
-                if (colorCountsInCell[colorKey] > maxCount) {
-                    maxCount = colorCountsInCell[colorKey];
-                    dominantColorRgb = { r, g, b };
+                const binKey = ((r >> 4) << 8) | ((g >> 4) << 4) | (b >> 4);
+                let bin = colorBins.get(binKey);
+                if (!bin) {
+                    bin = { count: 0, rSum: 0, gSum: 0, bSum: 0 };
+                    colorBins.set(binKey, bin);
+                }
+                bin.count++;
+                bin.rSum += r;
+                bin.gSum += g;
+                bin.bSum += b;
+                if (bin.count > maxCount) {
+                    maxCount = bin.count;
+                    dominantColorRgb = {
+                        r: Math.round(bin.rSum / bin.count),
+                        g: Math.round(bin.gSum / bin.count),
+                        b: Math.round(bin.bSum / bin.count)
+                    };
                 }
             }
         }

@@ -13,6 +13,8 @@ interface FloatingColorPaletteProps {
   selectedColorSystem: ColorSystem;
   isEraseMode: boolean;
   onEraseToggle: () => void;
+  isIslandCleanMode: boolean;
+  onIslandCleanToggle: () => void;
   fullPaletteColors: { key: string; color: string }[];
   showFullPalette: boolean;
   onToggleFullPalette: () => void;
@@ -35,6 +37,8 @@ const FloatingColorPalette: React.FC<FloatingColorPaletteProps> = ({
   selectedColorSystem,
   isEraseMode,
   onEraseToggle,
+  isIslandCleanMode,
+  onIslandCleanToggle,
   fullPaletteColors,
   showFullPalette,
   onToggleFullPalette,
@@ -290,6 +294,24 @@ const FloatingColorPalette: React.FC<FloatingColorPaletteProps> = ({
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
               </svg>
               批量替换
+            </button>
+          </div>
+
+          {/* 点选清理按钮 */}
+          <div className="mb-3">
+            <button
+              onClick={onIslandCleanToggle}
+              className={`w-full p-2 rounded-lg border transition-all duration-200 flex items-center justify-center gap-1 text-xs ${
+                isIslandCleanMode
+                  ? 'bg-violet-500 text-white border-violet-500'
+                  : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-violet-50 dark:hover:bg-violet-900/20'
+              }`}
+              title="点击画布中的孤立色块，将其整体吸收到周围颜色；可连续清理多个区域"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+              点选清理杂色
             </button>
           </div>
 
