@@ -139,6 +139,10 @@ export default function Home() {
   const [isEraseMode, setIsEraseMode] = useState<boolean>(false);
   // 新增：点选清理模式状态（点击孤立色块吸收到邻接主色）
   const [isIslandCleanMode, setIsIslandCleanMode] = useState<boolean>(false);
+  // 新增：吸管模式状态（点击画布取色）
+  const [isEyedropperMode, setIsEyedropperMode] = useState<boolean>(false);
+  // 新增：画笔大小（1/2/3，以点击格为中心的 N×N 区域，橡皮同样生效）
+  const [brushSize, setBrushSize] = useState<number>(1);
   // 新增状态变量：控制打赏弹窗
   const [isDonationModalOpen, setIsDonationModalOpen] = useState<boolean>(false);
   const [customPaletteSelections, setCustomPaletteSelections] = useState<PaletteSelections>({});
@@ -687,6 +691,9 @@ export default function Home() {
           setSelectedColor(null);
           setIsEraseMode(false);
           setIsIslandCleanMode(false);
+          setIsEyedropperMode(false);
+          setIsEyedropperMode(false);
+          setIsEyedropperMode(false);
           
           // 设置格子数量为导入的尺寸，避免重新映射时尺寸被修改
           setGranularity(gridDimensions.N);
@@ -774,6 +781,7 @@ export default function Home() {
     if (!isEraseMode) {
       setSelectedColor(null);
       setIsIslandCleanMode(false);
+      setIsEyedropperMode(false);
     }
   };
 
@@ -794,12 +802,92 @@ export default function Home() {
     }
 
     setIsIslandCleanMode(!isIslandCleanMode);
-    // 如果开启点选清理模式，取消选中的颜色，并退出擦除模式
+    // 如果开启点选清理模式，取消选中的颜色，并退出其他工具模式
     if (!isIslandCleanMode) {
       setSelectedColor(null);
       setIsEraseMode(false);
+      setIsEyedropperMode(false);
     }
   };
+
+  // 新增：吸管模式切换处理
+  const handleEyedropperToggle = () => {
+    if (!isManualColoringMode) {
+      return;
+    }
+
+    if (colorReplaceState.isActive) {
+      setColorReplaceState({
+        isActive: false,
+        step: 'select-source'
+      });
+      setHighlightColorKey(null);
+    }
+
+    setIsEyedropperMode(!isEyedropperMode);
+    if (!isEyedropperMode) {
+      setIsEraseMode(false);
+      setIsIslandCleanMode(false);
+    }
+  };
+
+  // 编辑模式快捷键：B 上色 / E 橡皮 / I 吸管 / C 点选清理 / U 或 Ctrl+Z 撤回 / Esc 退出工具
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) return;
+      if (!isManualColoringMode) return;
+
+      const key = event.key.toLowerCase();
+
+      // 撤回：Ctrl/Cmd+Z
+      if ((event.ctrlKey || event.metaKey) && key === 'z') {
+        event.preventDefault();
+        if (editHistory.length > 0) handleUndoEdit();
+        return;
+      }
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+
+      switch (key) {
+        case 'b': // 回到上色
+          setIsEraseMode(false);
+          setIsIslandCleanMode(false);
+          setIsEyedropperMode(false);
+          break;
+        case 'e': // 橡皮擦
+          setIsEraseMode(false);
+          setIsIslandCleanMode(false);
+          setIsEyedropperMode(false);
+          setSelectedColor({ ...transparentColorData });
+          break;
+        case 'i': // 吸管
+          setIsEraseMode(false);
+          setIsIslandCleanMode(false);
+          setIsEyedropperMode(prev => !prev);
+          break;
+        case 'c': // 点选清理
+          setIsEraseMode(false);
+          setIsEyedropperMode(false);
+          setIsIslandCleanMode(prev => !prev);
+          break;
+        case 'u':
+          if (editHistory.length > 0) handleUndoEdit();
+          break;
+        case 'escape': // 退出所有工具模式
+          setIsEraseMode(false);
+          setIsIslandCleanMode(false);
+          setIsEyedropperMode(false);
+          if (colorReplaceState.isActive) {
+            setColorReplaceState({ isActive: false, step: 'select-source' });
+            setHighlightColorKey(null);
+          }
+          break;
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isManualColoringMode, editHistory.length, colorReplaceState.isActive, handleUndoEdit]);
 
   // ++ 新增：处理输入框变化的函数 ++
   const handleGranularityInputChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -996,7 +1084,7 @@ export default function Home() {
       if (N <= 0 || M <= 0) { console.error("Invalid grid dimensions:", { N, M }); setIsProcessing(false); return; }
 
       // 动态调整画布尺寸：当格子数量大于100时，增加画布尺寸以保持每个格子的可见性
-      const baseWidth = 500;
+      const baseWidth = typeof window !== 'undefined' && window.innerWidth >= 1280 ? 800 : 500;
       const minCellSize = 4; // 每个格子的最小尺寸（像素）
       const recommendedCellSize = 6; // 推荐的格子尺寸（像素）
       
@@ -1702,6 +1790,17 @@ export default function Home() {
         return;
       }
 
+      // 吸管模式逻辑：点击画布取色
+      if (isClick && isEyedropperMode) {
+        if (cellData && !cellData.isExternal && cellData.key && cellData.key !== TRANSPARENT_KEY) {
+          setSelectedColor({ key: cellData.key, color: cellData.color });
+          setIsEyedropperMode(false); // 取色后退出吸管，可直接上色
+          setTooltipData(null);
+          showToast('已吸取颜色');
+        }
+        return;
+      }
+
       // 点选清理模式逻辑（保持激活，可连续清理多个区域，用调色盘按钮退出）
       if (isClick && isIslandCleanMode) {
         if (cellData && !cellData.isExternal && cellData.key && cellData.key !== TRANSPARENT_KEY) {
@@ -1712,68 +1811,45 @@ export default function Home() {
         return;
       }
 
-      // Manual Coloring Logic - 保持原有的上色逻辑
+      // Manual Coloring Logic - 上色逻辑（按画笔大小，以点击格为中心）
       if (isClick && isManualColoringMode && selectedColor) {
-        // 手动上色模式逻辑保持不变
-        // ...现有代码...
+        const size = Math.max(1, Math.min(3, brushSize));
+        const offset = Math.floor((size - 1) / 2);
+        const startI = i - offset;
+        const startJ = j - offset;
+
         const newPixelData = mappedPixelData.map(row => row.map(cell => ({ ...cell })));
-        const currentCell = newPixelData[j]?.[i];
+        let changed = false;
 
-        if (!currentCell) return;
+        for (let dj = 0; dj < size; dj++) {
+          for (let di = 0; di < size; di++) {
+            const r = startJ + dj;
+            const c = startI + di;
+            if (r < 0 || r >= M || c < 0 || c >= N) continue;
+            const target = newPixelData[r][c];
+            if (!target) continue;
 
-        const previousKey = currentCell.key;
-        const wasExternal = currentCell.isExternal;
-        
-        let newCellData: MappedPixel;
-        
-        if (selectedColor.key === TRANSPARENT_KEY) {
-          newCellData = { ...transparentColorData };
-        } else {
-          newCellData = { ...selectedColor, isExternal: false };
+            const newCellData: MappedPixel = selectedColor.key === TRANSPARENT_KEY
+              ? { ...transparentColorData }
+              : { ...selectedColor, isExternal: false };
+
+            if (newCellData.key !== target.key || newCellData.isExternal !== target.isExternal) {
+              newPixelData[r][c] = newCellData;
+              changed = true;
+            }
+          }
         }
 
-        // Only update if state changes
-        if (newCellData.key !== previousKey || newCellData.isExternal !== wasExternal) {
-          newPixelData[j][i] = newCellData;
+        if (changed) {
           saveEditSnapshot(newPixelData);
           setMappedPixelData(newPixelData);
 
-          // Update color counts
-          if (colorCounts) {
-            const newColorCounts = { ...colorCounts };
-            let newTotalCount = totalBeadCount;
-
-            // 处理之前颜色的减少（使用hex值）
-            if (!wasExternal && previousKey !== TRANSPARENT_KEY) {
-              const previousCell = mappedPixelData[j][i];
-              const previousHex = previousCell?.color?.toUpperCase();
-              if (previousHex && newColorCounts[previousHex]) {
-                newColorCounts[previousHex].count--;
-                if (newColorCounts[previousHex].count <= 0) {
-                  delete newColorCounts[previousHex];
-              }
-              newTotalCount--;
-              }
-            }
-
-            // 处理新颜色的增加（使用hex值）
-            if (!newCellData.isExternal && newCellData.key !== TRANSPARENT_KEY) {
-              const newHex = newCellData.color.toUpperCase();
-              if (!newColorCounts[newHex]) {
-                newColorCounts[newHex] = {
-                  count: 0,
-                  color: newHex
-                };
-              }
-              newColorCounts[newHex].count++;
-              newTotalCount++;
-            }
-
-            setColorCounts(newColorCounts);
-            setTotalBeadCount(newTotalCount);
-          }
+          // 从网格重新统计颜色用量
+          const { colorCounts: newColorCounts, totalCount: newTotalCount } = recalculateColorStats(newPixelData);
+          setColorCounts(newColorCounts);
+          setTotalBeadCount(newTotalCount);
         }
-        
+
         // 上色操作后隐藏提示
         setTooltipData(null);
       }
@@ -1863,6 +1939,7 @@ export default function Home() {
     setSelectedColor(null);
     setIsEraseMode(false);
     setIsIslandCleanMode(false);
+    setIsEyedropperMode(false);
   };
 
   // ++ 新增：导出自定义色板配置 ++
@@ -2003,6 +2080,9 @@ export default function Home() {
     if (isIslandCleanMode) {
       setIsIslandCleanMode(false);
     }
+    if (isEyedropperMode) {
+      setIsEyedropperMode(false);
+    }
 
     // 设置选中的颜色
     setSelectedColor(colorData);
@@ -2022,6 +2102,7 @@ export default function Home() {
         // 只退出冲突的模式，但保持在手动上色模式下
         setIsEraseMode(false);
         setIsIslandCleanMode(false);
+        setIsEyedropperMode(false);
         setSelectedColor(null);
         return {
           isActive: true,
@@ -2341,7 +2422,7 @@ export default function Home() {
       </header>
 
       {/* Apply dark mode styles to the main section */}
-      <main ref={mainRef} className="w-full md:max-w-4xl flex flex-col items-center space-y-5 sm:space-y-6 relative overflow-hidden">
+      <main ref={mainRef} className="w-full md:max-w-4xl xl:max-w-7xl flex flex-col items-center space-y-5 sm:space-y-6 relative overflow-hidden">
         {/* Apply dark mode styles to the Drop Zone */}
         <div
           onDrop={handleDrop} onDragOver={handleDragOver} onDragEnter={handleDragOver}
@@ -2377,11 +2458,11 @@ export default function Home() {
 
         {/* Controls and Output Area */}
         {originalImageSrc && (
-          <div className="w-full flex flex-col items-center space-y-5 sm:space-y-6">
+          <div className="w-full flex flex-col items-center space-y-5 sm:space-y-6 xl:flex-row-reverse xl:items-start xl:justify-center xl:space-y-0 xl:gap-8">
             {/* ++ HIDE Control Row in manual mode ++ */}
             {!isManualColoringMode && (
               /* 修改控制面板网格布局 */
-              <div className="w-full md:max-w-2xl grid grid-cols-1 sm:grid-cols-2 gap-4 bg-white dark:bg-gray-800 p-4 sm:p-5 rounded-xl shadow-md border border-gray-100 dark:border-gray-700">
+              <div className="w-full md:max-w-2xl xl:w-[400px] xl:max-w-none xl:flex-shrink-0 xl:sticky xl:top-4 xl:self-start grid grid-cols-1 sm:grid-cols-2 gap-4 bg-white dark:bg-gray-800 p-4 sm:p-5 rounded-xl shadow-md border border-gray-100 dark:border-gray-700">
                 {/* Granularity Input */}
                 <div className="flex-1">
                   {/* Label color */}
@@ -2592,7 +2673,7 @@ export default function Home() {
             )}
 
             {/* Output Section */}
-            <div className="w-full md:max-w-2xl">
+            <div className="w-full md:max-w-2xl xl:max-w-3xl">
               <canvas ref={originalCanvasRef} className="hidden"></canvas>
 
               {/* ++ 手动编辑模式提示信息 ++ */}
@@ -2654,7 +2735,7 @@ export default function Home() {
         {/* ++ HIDE Color Counts in manual mode ++ */}
         {!isManualColoringMode && originalImageSrc && colorCounts && Object.keys(colorCounts).length > 0 && (
           // Apply dark mode styles to color counts container
-          <div className="w-full md:max-w-2xl mt-6 bg-white dark:bg-gray-800 p-4 rounded-lg shadow border border-gray-100 dark:border-gray-700 color-stats-panel">
+          <div className="w-full md:max-w-2xl xl:max-w-3xl mt-6 bg-white dark:bg-gray-800 p-4 rounded-lg shadow border border-gray-100 dark:border-gray-700 color-stats-panel">
             {/* Title color */}
             <h3 className="text-lg font-semibold mb-1 text-gray-700 dark:text-gray-200 text-center">
               去除杂色 
@@ -2804,7 +2885,7 @@ export default function Home() {
 
         {/* ++ RENDER Enter Manual Mode Button ONLY when NOT in manual mode (before downloads) ++ */}
         {!isManualColoringMode && originalImageSrc && mappedPixelData && gridDimensions && (
-            <div className="w-full md:max-w-2xl mt-4 space-y-3"> {/* Wrapper div */} 
+            <div className="w-full md:max-w-2xl xl:max-w-3xl mt-4 space-y-3"> {/* Wrapper div */} 
              {/* Manual Edit Mode Button */}
              <button
                 onClick={() => {
@@ -2865,6 +2946,9 @@ export default function Home() {
           setTooltipData(null);
           setIsEraseMode(false);
           setIsIslandCleanMode(false);
+          setIsEyedropperMode(false);
+          setIsEyedropperMode(false);
+          setIsEyedropperMode(false);
           setColorReplaceState({
             isActive: false,
             step: 'select-source'
@@ -2889,6 +2973,10 @@ export default function Home() {
           onEraseToggle={handleEraseToggle}
           isIslandCleanMode={isIslandCleanMode}
           onIslandCleanToggle={handleIslandCleanToggle}
+          isEyedropperMode={isEyedropperMode}
+          onEyedropperToggle={handleEyedropperToggle}
+          brushSize={brushSize}
+          onBrushSizeChange={setBrushSize}
           fullPaletteColors={fullPaletteColors}
           showFullPalette={showFullPalette}
           onToggleFullPalette={handleToggleFullPalette}

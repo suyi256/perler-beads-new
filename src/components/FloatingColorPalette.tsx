@@ -15,6 +15,10 @@ interface FloatingColorPaletteProps {
   onEraseToggle: () => void;
   isIslandCleanMode: boolean;
   onIslandCleanToggle: () => void;
+  isEyedropperMode: boolean;
+  onEyedropperToggle: () => void;
+  brushSize: number;
+  onBrushSizeChange: (size: number) => void;
   fullPaletteColors: { key: string; color: string }[];
   showFullPalette: boolean;
   onToggleFullPalette: () => void;
@@ -39,6 +43,10 @@ const FloatingColorPalette: React.FC<FloatingColorPaletteProps> = ({
   onEraseToggle,
   isIslandCleanMode,
   onIslandCleanToggle,
+  isEyedropperMode,
+  onEyedropperToggle,
+  brushSize,
+  onBrushSizeChange,
   fullPaletteColors,
   showFullPalette,
   onToggleFullPalette,
@@ -281,7 +289,23 @@ const FloatingColorPalette: React.FC<FloatingColorPaletteProps> = ({
               区域擦除
             </button>
 
-            {/* 颜色替换按钮 */}
+            {/* 吸管按钮 */}
+            <button
+              onClick={onEyedropperToggle}
+              className={`flex-1 p-2 rounded-lg border transition-all duration-200 flex items-center justify-center gap-1 text-xs ${
+                isEyedropperMode
+                  ? 'bg-teal-500 text-white border-teal-500'
+                  : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-teal-50 dark:hover:bg-teal-900/20'
+              }`}
+              title="吸管：点击画布取色（快捷键 I）"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 2.7l5.66 5.66a8 8 0 11-11.31 0L12 2.7z" />
+              </svg>
+              吸管
+            </button>
+
+            {/* 批量替换按钮 */}
             <button
               onClick={onColorReplaceToggle}
               className={`flex-1 p-2 rounded-lg border transition-all duration-200 flex items-center justify-center gap-1 text-xs ${
@@ -295,6 +319,27 @@ const FloatingColorPalette: React.FC<FloatingColorPaletteProps> = ({
               </svg>
               批量替换
             </button>
+          </div>
+
+          {/* 画笔大小 */}
+          <div className="flex items-center gap-2 mb-3">
+            <span className="text-xs text-gray-500 dark:text-gray-400 shrink-0">画笔</span>
+            <div className="flex flex-1 gap-1.5">
+              {[1, 2, 3].map(size => (
+                <button
+                  key={size}
+                  onClick={() => onBrushSizeChange(size)}
+                  className={`flex-1 py-1.5 rounded-lg border text-xs transition-all duration-200 ${
+                    brushSize === size
+                      ? 'bg-blue-500 text-white border-blue-500'
+                      : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-200 dark:hover:bg-gray-600'
+                  }`}
+                  title={`${size}×${size} 格子（以点击位置为中心）`}
+                >
+                  {size}×{size}
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* 点选清理按钮 */}
