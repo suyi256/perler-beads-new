@@ -4,10 +4,8 @@
 
 ### 任意图片 → 拼豆底稿，一键生成
 
-[![Mobile](https://img.shields.io/badge/移动端-perlerbeadsold.zippland.com-ff69b4?style=for-the-badge)](https://perlerbeadsold.zippland.com)
-[![Desktop](https://img.shields.io/badge/桌面端-perlerbeads.zippland.com-8b5cf6?style=for-the-badge)](https://perlerbeads.zippland.com)
 [![License](https://img.shields.io/badge/License-AGPL%20v3-blue?style=for-the-badge)](./LICENSE)
-[![PRs Welcome](https://img.shields.io/badge/PRs-Welcome-brightgreen?style=for-the-badge)](https://github.com/Zippland/perler-beads/pulls)
+[![PRs Welcome](https://img.shields.io/badge/PRs%20Welcome-brightgreen?style=for-the-badge)](https://github.com/suyi256/perler-beads-new/pulls)
 
 开源的智能拼豆图纸生成器 — 自动颜色映射 · 多品牌色号适配 · 杂色清理 · 一键导出图纸与采购清单
 
@@ -21,18 +19,19 @@
 
 - **智能像素化** — 基于主导色提取的像素化算法，消除传统均值池化导致的灰色毛边
 - **多色板适配** — 内置 5 大品牌色号体系（MARD / COCO / 漫漫 / 盼盼 / 咪小窝），支持 168 / 144 / 96 等多种色板规格
-- **自动颜色合并** — BFS 连通区域检测 + 可调相似度阈值，自动清理杂色
+- **自动颜色合并** — 可调相似度阈值，自动合并相近颜色
+- **杂色清理** — 连通区域检测自动吸收孤立小色块，支持点选清理指定区域，所有清理操作可撤回
 - **背景智能移除** — 边界洪水填充算法自动识别并剥离外部背景
 - **颜色排除与重映射** — 一键排除不想要的颜色，自动重映射到最近似可用色
-- **手动精修** — 支持对单个像素格进行手动着色和修改
+- **手动精修** — 支持对单个像素格进行手动着色和修改，多步撤回
 - **导出图纸** — 下载带色号标注和网格线的 PNG 图纸，可直接打印使用
 - **导出采购清单** — 自动统计各颜色用量，生成采购清单图
 
 ## 快速开始
 
 ```bash
-git clone https://github.com/Zippland/perler-beads.git
-cd perler-beads
+git clone https://github.com/suyi256/perler-beads-new.git
+cd perler-beads-new
 npm install
 npm run dev
 ```
@@ -52,17 +51,21 @@ npm run dev
 
 ### 1. 初始颜色映射
 
-对每个网格单元，提取原图对应区域内出现频率最高的像素 RGB 值（主导色），通过欧氏距离映射到当前色板中最接近的颜色。相比均值池化，主导色提取有效避免了色块边界处的灰色毛边问题。
+对每个网格单元，提取原图对应区域内出现频率最高的像素 RGB 值（主导色），通过 Oklab 色彩空间距离映射到当前色板中最接近的颜色。相比均值池化，主导色提取有效避免了色块边界处的灰色毛边问题；主导色统计前先做粗粒度颜色量化，避免照片类图片因噪声导致的主色选择抖动。
 
 ### 2. 区域颜色合并
 
-使用 BFS 从未访问单元格出发，将欧氏距离小于阈值的邻近单元格聚合为连通区域，统一设置为区域内出现次数最多的色号。该步骤显著减少杂色，提升色块纯净度。
+按出现频率从高到低遍历调色板颜色，将颜色距离小于阈值的低频颜色整体并入高频颜色。该步骤显著减少杂色，提升色块纯净度。
 
-### 3. 背景移除
+### 3. 杂色清理（空间维度）
+
+对合并后的网格做连通区域分析，将面积小于清理强度的孤立小色块整体吸收到边界接触最多的邻近颜色，使色块边界更平整。支持在编辑模式中点选任意色块单独清理，并可多步撤回。
+
+### 4. 背景移除
 
 定义背景色号列表，从所有边界单元格执行洪水填充，标记与边界连通且属于背景色的单元格为"外部"。统计和导出时忽略外部单元格，实现自动背景剥离。
 
-### 4. 颜色排除与重映射
+### 5. 颜色排除与重映射
 
 当用户排除某颜色时，在当前存在且未被排除的颜色子集中寻找最近似替代色进行重映射。恢复颜色时触发完整的重处理流程。
 
@@ -72,8 +75,7 @@ npm run dev
 
 ## Roadmap
 
-- [ ] CIEDE2000 (Delta E) 颜色距离算法，替代 RGB 欧氏距离
-- [ ] Floyd-Steinberg 抖动，在有限色板下模拟更丰富的颜色过渡
+- [ ] CIEDE2000 (Delta E) 颜色距离算法
 - [ ] Web Workers 后台计算，优化大图性能
 - [ ] 用户自定义调色板上传
 - [ ] 微信小程序版本
@@ -88,14 +90,8 @@ npm run dev
 4. 推送到分支 (`git push origin feature/your-feature`)
 5. 创建 Pull Request
 
-## 共创声明
-
-本项目永久开源，由维护者无偿运营 [perlerbeadsold.zippland.com](https://perlerbeadsold.zippland.com) 供所有拼豆爱好者免费使用。
-
-我们公开全部算法细节和源代码，目的是推动拼豆工具生态的共同进步。欢迎所有人学习、使用、改进。
-
-**但请勿将本项目代码恶意抄袭后包装为闭源商业产品。** 这一行为违反开源协议，也伤害每一位贡献者的热情。使用本项目代码的衍生作品须遵守许可证条款，保留原始版权声明，并以相同协议开源。
-
 ## 许可证
 
 [AGPL-3.0](./LICENSE) &copy; [Zippland](https://github.com/Zippland)
+
+本项目基于 [Zippland/perler-beads](https://github.com/Zippland/perler-beads) 修改并扩展了杂色清理功能。
