@@ -195,7 +195,7 @@ export default function Home() {
   const [isFocusModePreDownloadModalOpen, setIsFocusModePreDownloadModalOpen] = useState<boolean>(false);
 
   // 新增：横屏设备弹窗状态
-  const [showDesktopModal, setShowDesktopModal] = useState<boolean>(false);
+  // （原“专业工作台”引流弹窗已移除）
 
   // 新增：编辑撤回历史栈（多步）
   interface EditSnapshot {
@@ -1233,52 +1233,6 @@ export default function Home() {
   useEffect(() => {
     setIsMounted(true);
   }, []);
-
-  // 强制显示专业工作台弹窗（每次进入页面都弹，引导用户前往新版）
-  useEffect(() => {
-    setShowDesktopModal(true);
-  }, []);
-
-  // 添加URL重定向检查
-  useEffect(() => {
-    // 检查是否在浏览器环境中
-    if (typeof window !== 'undefined') {
-      const currentUrl = window.location.href;
-      const currentHostname = window.location.hostname;
-      const targetDomain = 'https://perlerbeadsold.zippland.com/';
-      
-      // 排除localhost和127.0.0.1等本地开发环境
-      const isLocalhost = currentHostname === 'localhost' || 
-                         currentHostname === '127.0.0.1' || 
-                         currentHostname.startsWith('192.168.') ||
-                         currentHostname.startsWith('10.') ||
-                         currentHostname.endsWith('.local');
-      
-      // 检查当前URL是否不是目标域名，且不是本地开发环境
-      if (!currentUrl.startsWith(targetDomain) && !isLocalhost) {
-        
-        // 保留当前路径和查询参数
-        const currentPath = window.location.pathname;
-        const currentSearch = window.location.search;
-        const currentHash = window.location.hash;
-        
-        // 构建完整的目标URL
-        let redirectUrl = targetDomain;
-        
-        // 如果不是根路径，添加路径
-        if (currentPath && currentPath !== '/') {
-          redirectUrl = redirectUrl.replace(/\/$/, '') + currentPath;
-        }
-        
-        // 添加查询参数和哈希
-        redirectUrl += currentSearch + currentHash;
-        
-        // 执行重定向
-        window.location.replace(redirectUrl);
-      } else if (isLocalhost) {
-      }
-    }
-  }, []); // 只在组件首次挂载时执行
 
     // --- Download function (ensure filename includes palette) ---
     const handleDownloadRequest = (options?: GridDownloadOptions) => {
@@ -2374,76 +2328,15 @@ export default function Home() {
             让像素创意属于每一个人
           </p>
 
-          {/* 横屏设备弹窗 */}
-          {showDesktopModal && (
-            <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => setShowDesktopModal(false)}>
-              <div className="relative mx-4 w-full max-w-md rounded-2xl border border-blue-200 dark:border-blue-700 bg-white dark:bg-gray-800 p-6 shadow-2xl" onClick={e => e.stopPropagation()}>
-                <button
-                  onClick={() => setShowDesktopModal(false)}
-                  className="absolute top-3 right-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5">
-                    <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
-                  </svg>
-                </button>
-                <div className="flex flex-col items-center text-center">
-                  <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-blue-100 dark:bg-blue-900/40">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-6 h-6 text-blue-500 dark:text-blue-300">
-                      <path fillRule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 011 1v8a1 1 0 01-1 1H4a1 1 0 01-1-1V4zm1 0v8h12V4H4zm-1 12a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clipRule="evenodd" />
-                    </svg>
-                  </div>
-                  <h3 className="text-lg font-semibold text-gray-900 dark:text-white">专业工作台已上线</h3>
-                  <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">专业工作台拥有更完整的功能和更好的操作体验，推荐前往使用。</p>
-                  <div className="mt-5 flex w-full gap-3">
-                    <button
-                      onClick={() => setShowDesktopModal(false)}
-                      className="flex-1 rounded-xl border border-gray-300 dark:border-gray-600 px-4 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-                    >
-                      留在此页
-                    </button>
-                    <a
-                      href="https://perlerbeads.zippland.com/"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700 transition-colors"
-                    >
-                      前往专业工作台
-                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
-                        <path fillRule="evenodd" d="M3 10a1 1 0 011-1h9.586L11.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414-1.414L13.586 11H4a1 1 0 01-1-1z" clipRule="evenodd" />
-                      </svg>
-                    </a>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* 链接行：专业工作台· 小红书 · GitHub */}
+          {/* 链接行：GitHub */}
           <div className="mt-4 flex flex-wrap items-center justify-center gap-2.5 text-xs">
-            <a href="https://perlerbeads.zippland.com/" target="_blank" rel="noopener noreferrer" className="group inline-flex items-center gap-1 text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 font-medium transition-colors">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
-                <path fillRule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 011 1v8a1 1 0 01-1 1H4a1 1 0 01-1-1V4zm1 0v8h12V4H4zm-1 12a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clipRule="evenodd" />
-              </svg>
-              专业工作台
-              <span className="px-1 py-px rounded bg-indigo-500 text-[9px] font-bold text-white leading-none">NEW</span>
-            </a>
-            <span className="text-gray-300 dark:text-gray-600">·</span>
-            <a href="https://www.xiaohongshu.com/user/profile/623e8b080000000010007721" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-rose-500 dark:text-rose-400 hover:text-rose-700 dark:hover:text-rose-300 font-medium transition-colors">
-              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 1024 1024" fill="currentColor">
-                <path d="M512 64C264.6 64 64 264.6 64 512s200.6 448 448 448 448-200.6 448-448S759.4 64 512 64z m238.8 360.2l-57.7 93.3c-10.1 16.3-31.5 21.3-47.8 11.2l-112.4-69.5c-16.3-10.1-21.3-31.5-11.2-47.8l57.7-93.3c10.1-16.3 31.5-21.3 47.8-11.2l112.4 69.5c16.3 10.1 21.3 31.5 11.2 47.8zM448 496l-57.7 93.3c-10.1 16.3-31.5 21.3-47.8 11.2l-112.4-69.5c-16.3-10.1-21.3-31.5-11.2-47.8l57.7-93.3c10.1-16.3 31.5-21.3 47.8-11.2l112.4 69.5c16.3 10.1 21.3 31.5 11.2 47.8z m248.9 43.2l-57.7 93.3c-10.1 16.3-31.5 21.3-47.8 11.2l-112.4-69.5c-16.3-10.1-21.3-31.5-11.2-47.8l57.7-93.3c10.1-16.3 31.5-21.3 47.8-11.2l112.4 69.5c16.3 10.1 21.3 31.5 11.2 47.8z"/>
-              </svg>
-              小红书
-            </a>
-            <span className="text-gray-300 dark:text-gray-600">·</span>
-            <a href="https://github.com/Zippland/perler-beads" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 font-medium transition-colors">
+            <a href="https://github.com/suyi256/perler-beads-new" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 font-medium transition-colors">
               <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
                 <path fillRule="evenodd" d="M12 0C5.37 0 0 5.48 0 12.25c0 5.42 3.44 10.01 8.2 11.63.6.12.82-.27.82-.6 0-.3-.01-1.08-.02-2.13-3.34.74-4.04-1.65-4.04-1.65-.55-1.44-1.35-1.83-1.35-1.83-1.1-.78.08-.77.08-.77 1.21.09 1.85 1.26 1.85 1.26 1.08 1.9 2.83 1.35 3.52 1.03.11-.81.42-1.35.77-1.66-2.66-.31-5.46-1.36-5.46-6.06 0-1.34.46-2.43 1.22-3.29-.12-.31-.53-1.55.12-3.23 0 0 1-.33 3.29 1.25a10.96 10.96 0 0 1 5.98 0c2.29-1.58 3.29-1.25 3.29-1.25.65 1.68.24 2.92.12 3.23.76.86 1.22 1.95 1.22 3.29 0 4.71-2.81 5.74-5.49 6.05.43.38.81 1.13.81 2.28 0 1.65-.02 2.98-.02 3.39 0 .33.22.72.83.59C20.56 22.25 24 17.67 24 12.25 24 5.48 18.63 0 12 0Z" />
               </svg>
               GitHub
             </a>
           </div>
-          {/* 来源提示 */}
-          <p className="mt-2 text-[10px] text-gray-400 dark:text-gray-500">发布平台请标注来源或保留图片水印及标识</p>
         </div>
       </header>
 
