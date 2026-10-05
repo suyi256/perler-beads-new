@@ -262,10 +262,7 @@ export async function downloadImage({
     // 计算网格尺寸
     const gridWidth = N * downloadCellSize;
     const gridHeight = M * downloadCellSize;
-    
-    // 计算小红书标识区域的高度
-    const xiaohongshuAreaHeight = 35; // 为小红书名字预留的底部空间
-  
+
     // 计算标题栏高度（根据图片大小自动调整）
     const baseTitleBarHeight = 80; // 增大基础高度
     
@@ -315,7 +312,7 @@ export async function downloadImage({
   
     // 调整画布大小，包含标题栏、坐标轴、统计区域和小红书标识区域（四边都有坐标）
     const downloadWidth = gridWidth + (axisLabelSize * 2) + extraLeftMargin + extraRightMargin;
-    let downloadHeight = titleBarHeight + gridHeight + (axisLabelSize * 2) + statsHeight + extraTopMargin + extraBottomMargin + xiaohongshuAreaHeight;
+    let downloadHeight = titleBarHeight + gridHeight + (axisLabelSize * 2) + statsHeight + extraTopMargin + extraBottomMargin;
   
     let downloadCanvas = document.createElement('canvas');
     downloadCanvas.width = downloadWidth;
@@ -391,7 +388,7 @@ export async function downloadImage({
     const titleStartX = brandBlockWidth + titleBarHeight * 0.3;
     const mainTitleY = titleBarHeight * 0.4;
     
-    ctx.fillText('七卡瓦', titleStartX, mainTitleY);
+    ctx.fillText('拼豆生成', titleStartX, mainTitleY);
     
     // 5. 副标题 - 功能说明
     ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
@@ -577,42 +574,11 @@ export async function downloadImage({
     ctx.strokeStyle = '#000000'; // 黑色边框
     ctx.lineWidth = 1.5;
     ctx.strokeRect(
-      extraLeftMargin + axisLabelSize + 0.5, 
-      titleBarHeight + extraTopMargin + axisLabelSize + 0.5, 
-      N * downloadCellSize, 
+      extraLeftMargin + axisLabelSize + 0.5,
+      titleBarHeight + extraTopMargin + axisLabelSize + 0.5,
+      N * downloadCellSize,
       M * downloadCellSize
     );
-
-    // 副水印：放在网格左上角，简洁版本
-    const secondaryWatermarkFontSize = Math.max(10, Math.floor(downloadCellSize * 0.5));
-    const secondaryText = '@七卡瓦';
-    
-    ctx.font = `500 ${secondaryWatermarkFontSize}px system-ui, -apple-system, sans-serif`;
-    const secondaryMetrics = ctx.measureText(secondaryText);
-    const secondaryWidth = secondaryMetrics.width;
-    const secondaryHeight = secondaryWatermarkFontSize;
-    
-    const secondaryWatermarkX = extraLeftMargin + axisLabelSize + 15;
-    const secondaryWatermarkY = titleBarHeight + extraTopMargin + axisLabelSize + secondaryHeight + 15;
-    
-    // 副水印背景
-    const secondaryBgPadding = 4;
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.75)';
-    ctx.beginPath();
-    ctx.roundRect(
-      secondaryWatermarkX - secondaryBgPadding,
-      secondaryWatermarkY - secondaryHeight - secondaryBgPadding,
-      secondaryWidth + secondaryBgPadding * 2,
-      secondaryHeight + secondaryBgPadding * 2,
-      3
-    );
-    ctx.fill();
-    
-    // 副水印文字
-    ctx.fillStyle = '#6B7280'; // 中等灰色，存在但不突兀
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'bottom';
-    ctx.fillText(secondaryText, secondaryWatermarkX, secondaryWatermarkY);
 
     // 绘制统计信息
     if (includeStats && colorCounts) {
@@ -708,43 +674,7 @@ export async function downloadImage({
       ctx.font = `bold ${statsFontSize}px sans-serif`;
       ctx.textAlign = 'right';
       ctx.fillText(`总计: ${totalBeadCount} 颗`, downloadWidth - statsPadding, totalY);
-      
-      // 统计区域水印 - 第三重保护，清晰明显
-      const statsWatermarkFontSize = Math.max(10, Math.floor(statsFontSize * 0.7));
-      const statsWatermarkText = '图纸来源：小红书@七卡瓦';
-      
-      ctx.font = `500 ${statsWatermarkFontSize}px system-ui, -apple-system, sans-serif`;
-      const statsTextMetrics = ctx.measureText(statsWatermarkText);
-      const statsTextWidth = statsTextMetrics.width;
-      const statsTextHeight = statsWatermarkFontSize;
-      
-      const statsWatermarkX = statsPadding;
-      const statsWatermarkY = totalY + 20;
-      
-      // 统计区域水印背景
-      const statsBgPadding = 5;
-      ctx.fillStyle = 'rgba(248, 250, 252, 0.9)'; // 浅灰背景，更柔和
-      ctx.beginPath();
-      ctx.roundRect(
-        statsWatermarkX - statsBgPadding,
-        statsWatermarkY - statsTextHeight - statsBgPadding,
-        statsTextWidth + statsBgPadding * 2,
-        statsTextHeight + statsBgPadding * 2,
-        3
-      );
-      ctx.fill();
-      
-      // 统计区域水印边框
-      ctx.strokeStyle = 'rgba(0, 0, 0, 0.08)';
-      ctx.lineWidth = 1;
-      ctx.stroke();
-      
-      // 统计区域水印文字
-      ctx.fillStyle = '#64748B'; // 清晰的深灰色
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'bottom';
-      ctx.fillText(statsWatermarkText, statsWatermarkX, statsWatermarkY);
-      
+
       // 更新统计区域高度的计算 - 需要包含新增的顶部间距
       const footerHeight = 30; // 总计部分高度
       statsHeight = titleHeight + (numRows * statsRowHeight) + footerHeight + (statsPadding * 2) + statsTopMargin;
@@ -753,7 +683,7 @@ export async function downloadImage({
     // 重新计算画布高度并调整
     if (includeStats && colorCounts) {
       // 调整画布大小，包含计算后的统计区域和小红书标识区域
-      const newDownloadHeight = titleBarHeight + extraTopMargin + M * downloadCellSize + (axisLabelSize * 2) + statsHeight + extraBottomMargin + xiaohongshuAreaHeight;
+      const newDownloadHeight = titleBarHeight + extraTopMargin + M * downloadCellSize + (axisLabelSize * 2) + statsHeight + extraBottomMargin;
       
       if (downloadHeight !== newDownloadHeight) {
         // 如果高度变化了，需要创建新的画布并复制当前内容

@@ -1,7 +1,7 @@
 {
-  "name": "七卡瓦拼豆底稿生成器",
-  "short_name": "七卡瓦",
-  "description": "七卡瓦拼豆底稿生成器，让你轻松制作精美的像素画作品",
+  "name": "拼豆底稿生成器",
+  "short_name": "拼豆生成",
+  "description": "拼豆底稿生成器，让你轻松制作精美的像素画作品",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#E8F4FD",
@@ -44,6 +44,9 @@
       "form_factor": "wide"
     }
   ],
-  "categories": ["utilities", "productivity"],
+  "categories": [
+    "utilities",
+    "productivity"
+  ],
   "lang": "zh-CN"
 }

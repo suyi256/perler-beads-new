@@ -2258,10 +2258,10 @@ export default function Home() {
 
             {/* Ultra fancy brand name and tool name with hyper cute decorations */}
             <div className="relative flex flex-col items-center space-y-3">
-              {/* Brand name - 七卡瓦 with ultra fancy effects */}
+              {/* Brand name - 拼豆生成 with ultra fancy effects */}
               <div className="relative">
                 <h1 className="relative text-4xl sm:text-6xl font-black text-transparent bg-clip-text bg-gradient-to-r from-pink-500 via-purple-500 via-blue-500 to-cyan-400 tracking-wider drop-shadow-2xl transform hover:scale-105 transition-transform duration-300">
-                  七卡瓦
+                  拼豆生成
                 </h1>
                 
                 {/* Super fancy geometric decorations */}
@@ -3001,7 +3001,7 @@ export default function Home() {
 
         {/* Copyright text color */}
         <p className="font-medium text-gray-600 dark:text-gray-300">
-          七卡瓦 拼豆底稿生成器 &copy; {new Date().getFullYear()}
+          拼豆生成 · 拼豆底稿生成器 &copy; {new Date().getFullYear()}
         </p>
       </footer>
 
