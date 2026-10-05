@@ -91,7 +91,7 @@ import FloatingToolbar from '../components/FloatingToolbar';
 import MagnifierTool from '../components/MagnifierTool';
 import MagnifierSelectionOverlay from '../components/MagnifierSelectionOverlay';
 import { loadPaletteSelections, savePaletteSelections, presetToSelections, PaletteSelections } from '../utils/localStorageUtils';
-import { TRANSPARENT_KEY, transparentColorData } from '../utils/pixelEditingUtils';
+import { TRANSPARENT_KEY, transparentColorData, recalculateColorStats } from '../utils/pixelEditingUtils';
 import { cleanupSmallIslands, getIslandAt, getDominantNeighborColor, absorbIsland } from '../utils/spatialCleanup';
 
 // 1. 导入新的 DonationModal 组件
@@ -197,7 +197,12 @@ export default function Home() {
     colorCounts: { [key: string]: { count: number; color: string } };
     totalBeadCount: number;
   }
-  const [editHistory, setEditHistory] = useState<EditSnapshot[]>([]);
+
+  // 撤回历史条目：只存变更格子的逆向前值，避免整份网格常驻内存
+  interface EditHistoryEntry {
+    changes: { row: number; col: number; before: MappedPixel }[];
+  }
+  const [editHistory, setEditHistory] = useState<EditHistoryEntry[]>([]);
 
   // 新增：一键去背景撤回快照（单步）
   const [bgRemovalSnapshot, setBgRemovalSnapshot] = useState<EditSnapshot | null>(null);
@@ -234,27 +239,44 @@ export default function Home() {
 
   // --- 撤回功能 ---
 
-  // 保存编辑快照到历史栈
-  const saveEditSnapshot = useCallback(() => {
-    if (!mappedPixelData || !colorCounts) return;
-    const snapshot: EditSnapshot = {
-      mappedPixelData: mappedPixelData.map(row => row.map(cell => ({ ...cell }))),
-      colorCounts: { ...colorCounts },
-      totalBeadCount,
-    };
-    setEditHistory(prev => [...prev.slice(-49), snapshot]);
-  }, [mappedPixelData, colorCounts, totalBeadCount]);
+  // 保存编辑快照到历史栈：对比变更前后只记录差异格子
+  const saveEditSnapshot = useCallback((nextData: MappedPixel[][]) => {
+    if (!mappedPixelData) return;
+    const changes: EditHistoryEntry['changes'] = [];
+    for (let r = 0; r < mappedPixelData.length; r++) {
+      const beforeRow = mappedPixelData[r];
+      const afterRow = nextData[r];
+      if (!afterRow) break;
+      for (let c = 0; c < beforeRow.length; c++) {
+        const before = beforeRow[c];
+        const after = afterRow[c];
+        if (!after || before === after) continue;
+        if (before.key !== after.key || before.color !== after.color || before.isExternal !== after.isExternal) {
+          changes.push({ row: r, col: c, before: { ...before } });
+        }
+      }
+    }
+    if (changes.length === 0) return;
+    setEditHistory(prev => [...prev.slice(-49), { changes }]);
+  }, [mappedPixelData]);
 
-  // 编辑模式多步撤回
+  // 编辑模式多步撤回：逆向应用变更并从网格重新统计
   const handleUndoEdit = useCallback(() => {
-    if (editHistory.length === 0) return;
-    const snapshot = editHistory[editHistory.length - 1];
-    setMappedPixelData(snapshot.mappedPixelData);
-    setColorCounts(snapshot.colorCounts);
-    setTotalBeadCount(snapshot.totalBeadCount);
+    if (editHistory.length === 0 || !mappedPixelData) return;
+    const entry = editHistory[editHistory.length - 1];
+    const newPixelData = mappedPixelData.map(row => row.map(cell => ({ ...cell })));
+    for (const { row, col, before } of entry.changes) {
+      if (newPixelData[row] && newPixelData[row][col] !== undefined) {
+        newPixelData[row][col] = { ...before };
+      }
+    }
+    setMappedPixelData(newPixelData);
+    const { colorCounts: newColorCounts, totalCount: newTotalCount } = recalculateColorStats(newPixelData);
+    setColorCounts(newColorCounts);
+    setTotalBeadCount(newTotalCount);
     setEditHistory(prev => prev.slice(0, -1));
     showToast('已撤回上一步');
-  }, [editHistory, showToast]);
+  }, [editHistory, mappedPixelData, showToast]);
 
   // 一键去背景单步撤回
   const handleUndoBgRemoval = useCallback(() => {
@@ -291,7 +313,7 @@ export default function Home() {
       })
     );
 
-    saveEditSnapshot();
+    saveEditSnapshot(newMappedPixelData);
     setMappedPixelData(newMappedPixelData);
 
     // 更新颜色统计
@@ -326,6 +348,10 @@ export default function Home() {
 
   const originalCanvasRef = useRef<HTMLCanvasElement>(null);
   const pixelatedCanvasRef = useRef<HTMLCanvasElement>(null);
+  // 同一张源图的 ImageData 缓存：调参重跑时避免重复读取像素（大图不缓存以防内存常驻）
+  const imageDataCacheRef = useRef<{ src: string; data: ImageData } | null>(null);
+  // 图片处理中状态（生成/调参重跑时显示提示）
+  const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   // ++ 添加: Ref for import file input ++
   const importPaletteInputRef = useRef<HTMLInputElement>(null);
@@ -393,32 +419,25 @@ export default function Home() {
     // 尝试从localStorage加载
     const savedSelections = loadPaletteSelections();
     if (savedSelections && Object.keys(savedSelections).length > 0) {
-      console.log('从localStorage加载的数据键数量:', Object.keys(savedSelections).length);
       // 验证加载的数据是否都是有效的hex值
       const allHexValues = fullBeadPalette.map(color => color.hex.toUpperCase());
       const validSelections: PaletteSelections = {};
       let hasValidData = false;
-      let validCount = 0;
-      let invalidCount = 0;
       
       Object.entries(savedSelections).forEach(([key, value]) => {
         // 严格验证：键必须是有效的hex格式，并且存在于调色板中
         if (/^#[0-9A-F]{6}$/i.test(key) && allHexValues.includes(key.toUpperCase())) {
           validSelections[key.toUpperCase()] = value;
           hasValidData = true;
-          validCount++;
         } else {
-          invalidCount++;
         }
       });
       
-      console.log(`验证结果: 有效键 ${validCount} 个, 无效键 ${invalidCount} 个`);
       
       if (hasValidData) {
         setCustomPaletteSelections(validSelections);
     setIsCustomPalette(true);
     } else {
-        console.log('所有数据都无效，清除localStorage并重新初始化');
         // 如果本地数据无效，清除localStorage并默认选择所有颜色
         localStorage.removeItem('customPerlerPaletteSelections');
         const allHexValues = fullBeadPalette.map(color => color.hex.toUpperCase());
@@ -427,7 +446,6 @@ export default function Home() {
       setIsCustomPalette(false);
     }
     } else {
-      console.log('没有localStorage数据，默认选择所有颜色');
       // 如果没有保存的选择，默认选择所有颜色
       const allHexValues = fullBeadPalette.map(color => color.hex.toUpperCase());
       const initialSelections = presetToSelections(allHexValues, allHexValues);
@@ -457,11 +475,15 @@ export default function Home() {
   };
 
   const handleProceedToFocusMode = () => {
-    // 保存数据到localStorage供专心拼豆模式使用
-    localStorage.setItem('focusMode_pixelData', JSON.stringify(mappedPixelData));
-    localStorage.setItem('focusMode_gridDimensions', JSON.stringify(gridDimensions));
-    localStorage.setItem('focusMode_colorCounts', JSON.stringify(colorCounts));
-    localStorage.setItem('focusMode_selectedColorSystem', selectedColorSystem);
+    // 保存数据到localStorage供专心拼豆模式使用（大图可能超出存储限额，失败不阻塞跳转）
+    try {
+      localStorage.setItem('focusMode_pixelData', JSON.stringify(mappedPixelData));
+      localStorage.setItem('focusMode_gridDimensions', JSON.stringify(gridDimensions));
+      localStorage.setItem('focusMode_colorCounts', JSON.stringify(colorCounts));
+      localStorage.setItem('focusMode_selectedColorSystem', selectedColorSystem);
+    } catch (e) {
+      console.warn('专注模式数据保存失败（可能超出本地存储限额）', e);
+    }
     
     // 跳转到专心拼豆页面
     window.location.href = '/focus';
@@ -616,10 +638,8 @@ export default function Home() {
     
     if (fileExtension === 'csv') {
       // 处理CSV文件
-      console.log('正在导入CSV文件...');
       importCsvData(file)
         .then(({ mappedPixelData, gridDimensions }) => {
-          console.log(`成功导入CSV文件: ${gridDimensions.N}x${gridDimensions.M}`);
           
           // 设置导入的数据
           setMappedPixelData(mappedPixelData);
@@ -791,8 +811,7 @@ export default function Home() {
   };
 
   // ++ 修改：处理确认按钮点击的函数，同时处理两个参数 ++
-  const handleConfirmParameters = () => {
-    // 处理格子数
+  const handleConfirmParameters = () => {    // 处理格子数
     const minGranularity = 10;
     const maxGranularity = 300;
     let newGranularity = parseInt(granularityInput, 10);
@@ -831,17 +850,14 @@ export default function Home() {
     const cleanupChanged = newCleanupStrength !== cleanupStrength;
     
     if (granularityChanged) {
-      console.log(`Confirming new granularity: ${newGranularity}`);
       setGranularity(newGranularity);
     }
     
     if (similarityChanged) {
-      console.log(`Confirming new similarity threshold: ${newSimilarity}`);
       setSimilarityThreshold(newSimilarity);
     }
 
     if (cleanupChanged) {
-      console.log(`Confirming new cleanup strength: ${newCleanupStrength}`);
       setCleanupStrength(newCleanupStrength);
     }
 
@@ -859,6 +875,13 @@ export default function Home() {
     setCleanupStrengthInput(newCleanupStrength.toString());
   };
 
+  // 参数输入框内按回车直接应用
+  const handleParamInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Enter') {
+      handleConfirmParameters();
+    }
+  };
+
   // 添加像素化模式切换处理函数
   const handlePixelationModeChange = (event: ChangeEvent<HTMLSelectElement>) => {
     const newMode = event.target.value as PixelationMode;
@@ -874,15 +897,13 @@ export default function Home() {
 
   // 修改pixelateImage函数接收模式参数
   const pixelateImage = (imageSrc: string, detailLevel: number, threshold: number, currentPalette: PaletteColor[], mode: PixelationMode, cleanupLevel: number) => {
-    console.log(`Attempting to pixelate with detail: ${detailLevel}, threshold: ${threshold}, mode: ${mode}, cleanup: ${cleanupLevel}`);
     const originalCanvas = originalCanvasRef.current;
     const pixelatedCanvas = pixelatedCanvasRef.current;
 
-    if (!originalCanvas || !pixelatedCanvas) { console.error("Canvas ref(s) not available."); return; }
+    if (!originalCanvas || !pixelatedCanvas) { console.error("Canvas ref(s) not available."); setIsProcessing(false); return; }
     const originalCtx = originalCanvas.getContext('2d', { willReadFrequently: true });
     const pixelatedCtx = pixelatedCanvas.getContext('2d');
-    if (!originalCtx || !pixelatedCtx) { console.error("Canvas context(s) not found."); return; }
-    console.log("Canvas contexts obtained.");
+    if (!originalCtx || !pixelatedCtx) { console.error("Canvas context(s) not found."); setIsProcessing(false); return; }
 
     if (currentPalette.length === 0) {
         console.error("Cannot pixelate: The selected color palette is empty (likely due to exclusions).");
@@ -891,6 +912,7 @@ export default function Home() {
         pixelatedCtx.clearRect(0, 0, pixelatedCanvas.width, pixelatedCanvas.height);
         setMappedPixelData(null);
         setGridDimensions(null);
+        setIsProcessing(false);
         // Keep colorCounts potentially showing the last valid counts? Or clear them too?
         // setColorCounts(null); // Decide if clearing counts is desired when palette is empty
         // setTotalBeadCount(0);
@@ -899,27 +921,25 @@ export default function Home() {
     const t1FallbackColor = currentPalette.find(p => p.key === 'T1')
                          || currentPalette.find(p => p.hex.toUpperCase() === '#FFFFFF')
                          || currentPalette[0]; // 使用第一个可用颜色作为备用
-    console.log("Using fallback color for empty cells:", t1FallbackColor);
 
     const img = new window.Image();
     
     img.onerror = (error: Event | string) => {
-      console.error("Image loading failed:", error); 
+      console.error("Image loading failed:", error);
       alert("无法加载图片。");
-      setOriginalImageSrc(null); 
-      setMappedPixelData(null); 
-      setGridDimensions(null); 
-      setColorCounts(null); 
+      setOriginalImageSrc(null);
+      setMappedPixelData(null);
+      setGridDimensions(null);
+      setColorCounts(null);
       setInitialGridColorKeys(new Set());
+      setIsProcessing(false);
     };
     
     img.onload = () => {
-      console.log("Image loaded successfully.");
       const aspectRatio = img.height / img.width;
       const N = detailLevel;
       const M = Math.max(1, Math.round(N * aspectRatio));
       if (N <= 0 || M <= 0) { console.error("Invalid grid dimensions:", { N, M }); return; }
-      console.log(`Grid size: ${N}x${M}`);
 
       // 动态调整画布尺寸：当格子数量大于100时，增加画布尺寸以保持每个格子的可见性
       const baseWidth = 500;
@@ -940,35 +960,40 @@ export default function Home() {
         // 确保不小于最小要求
         outputWidth = Math.max(outputWidth, requiredWidthForMinSize);
         
-        console.log(`Large grid detected (${N} columns). Adjusted canvas width from ${baseWidth} to ${outputWidth}px (cell size: ${Math.round(outputWidth / N)}px)`);
       }
       
       const outputHeight = Math.round(outputWidth * aspectRatio);
       
       // 在控制台提示用户画布尺寸变化
       if (N > 100) {
-        console.log(`💡 由于格子数量较多 (${N}x${M})，画布已自动放大以保持清晰度。可以使用水平滚动查看完整图像。`);
       }
       originalCanvas.width = img.width; originalCanvas.height = img.height;
       pixelatedCanvas.width = outputWidth; pixelatedCanvas.height = outputHeight;
-      console.log(`Canvas dimensions: Original ${img.width}x${img.height}, Output ${outputWidth}x${outputHeight}`);
 
       originalCtx.drawImage(img, 0, 0, img.width, img.height);
-      console.log("Original image drawn.");
 
-      // 1. 使用calculatePixelGrid进行初始颜色映射
-      console.log("Starting initial color mapping using calculatePixelGrid...");
+      // 1. 使用calculatePixelGrid进行初始颜色映射（ImageData 按源图缓存）
+      let fullImageData: ImageData;
+      if (imageDataCacheRef.current && imageDataCacheRef.current.src === imageSrc) {
+          fullImageData = imageDataCacheRef.current.data;
+      } else {
+          fullImageData = originalCtx.getImageData(0, 0, img.width, img.height);
+          if (img.width * img.height <= 4000000) {
+              imageDataCacheRef.current = { src: imageSrc, data: fullImageData };
+          } else {
+              imageDataCacheRef.current = null;
+          }
+      }
       const initialMappedData = calculatePixelGrid(
-          originalCtx,
+          fullImageData,
           img.width,
           img.height,
           N,
           M,
-          currentPalette, 
+          currentPalette,
           mode,
           t1FallbackColor
       );
-      console.log(`Initial data mapping complete using mode ${mode}. Starting global color merging...`);
 
       // --- 新的全局颜色合并逻辑 ---
       const keyToRgbMap = new Map<string, RgbColor>();
@@ -985,7 +1010,6 @@ export default function Home() {
               initialColorCounts[cell.key] = (initialColorCounts[cell.key] || 0) + 1;
           }
       });
-      console.log("Initial color counts:", initialColorCounts);
 
       // 3. 创建一个颜色排序列表，按出现频率从高到低排序
       const colorsByFrequency = Object.entries(initialColorCounts)
@@ -993,10 +1017,8 @@ export default function Home() {
           .map(entry => entry[0]);      // 只保留颜色键
       
       if (colorsByFrequency.length === 0) {
-          console.log("No non-background colors found! Skipping merging.");
       }
 
-      console.log("Colors sorted by frequency:", colorsByFrequency);
       
       // 4. 复制初始数据，准备合并
       const mergedData: MappedPixel[][] = initialMappedData.map(row => 
@@ -1004,70 +1026,72 @@ export default function Home() {
       );
       
       // 5. 处理相似颜色合并
+      // 先构建 低频色→高频色 映射，最后一次性替换网格，
+      // 避免旧实现中每对合并都全网格扫描（O(对数²×格数) → O(对数²+格数)）
       const similarityThresholdValue = threshold;
-      
+
       // 已被合并（替换）的颜色集合
       const replacedColors = new Set<string>();
-      
+      const mergeMap = new Map<string, string>();
+
       // 对每个颜色按频率从高到低处理
       for (let i = 0; i < colorsByFrequency.length; i++) {
           const currentKey = colorsByFrequency[i];
-          
+
           // 如果当前颜色已经被合并到更频繁的颜色中，跳过
           if (replacedColors.has(currentKey)) continue;
-          
+
           const currentRgb = keyToRgbMap.get(currentKey);
           if (!currentRgb) {
               console.warn(`RGB not found for key ${currentKey}. Skipping.`);
               continue;
           }
-          
+
           // 检查剩余的低频颜色
           for (let j = i + 1; j < colorsByFrequency.length; j++) {
               const lowerFreqKey = colorsByFrequency[j];
-              
+
               // 如果低频颜色已被替换，跳过
               if (replacedColors.has(lowerFreqKey)) continue;
-              
+
               const lowerFreqRgb = keyToRgbMap.get(lowerFreqKey);
               if (!lowerFreqRgb) {
                   console.warn(`RGB not found for key ${lowerFreqKey}. Skipping.`);
                   continue;
               }
-              
+
               // 计算颜色距离
               const dist = colorDistance(currentRgb, lowerFreqRgb);
-              
+
               // 如果距离小于阈值，将低频颜色替换为高频颜色
               if (dist < similarityThresholdValue) {
-                  console.log(`Merging color ${lowerFreqKey} into ${currentKey} (Distance: ${dist.toFixed(2)})`);
-                  
-                  // 标记这个颜色已被替换
+                  mergeMap.set(lowerFreqKey, currentKey);
                   replacedColors.add(lowerFreqKey);
-                  
-                  // 替换所有使用这个低频颜色的单元格
-                  for (let r = 0; r < M; r++) {
-                      for (let c = 0; c < N; c++) {
-                          if (mergedData[r][c].key === lowerFreqKey) {
-                              const colorData = keyToColorDataMap.get(currentKey);
-                              if (colorData) {
-                                  mergedData[r][c] = {
-                                      key: currentKey,
-                                      color: colorData.hex,
-                                      isExternal: false
-                                  };
-                              }
-                          }
+              }
+          }
+      }
+
+      // 一次性替换所有被合并颜色的单元格
+      if (mergeMap.size > 0) {
+          for (let r = 0; r < M; r++) {
+              for (let c = 0; c < N; c++) {
+                  const targetKey = mergeMap.get(mergedData[r][c].key);
+                  if (targetKey) {
+                      const colorData = keyToColorDataMap.get(targetKey);
+                      if (colorData) {
+                          mergedData[r][c] = {
+                              key: targetKey,
+                              color: colorData.hex,
+                              isExternal: false
+                          };
                       }
                   }
               }
           }
       }
-      
+
       if (replacedColors.size > 0) {
-          console.log(`Merged ${replacedColors.size} less frequent similar colors into more frequent ones.`);
       } else {
-          console.log("No colors were similar enough to merge.");
       }
       // --- 结束新的全局颜色合并逻辑 ---
 
@@ -1098,15 +1122,12 @@ export default function Home() {
         setColorCounts(counts);
         setTotalBeadCount(totalCount);
         setInitialGridColorKeys(new Set(Object.keys(counts)));
-        console.log("Color counts updated based on merged data (after merging):", counts);
-        console.log("Total bead count (total beads):", totalCount);
-        console.log("Stored initial grid color keys:", Object.keys(counts));
       } else {
         console.error("Pixelated canvas ref is null, skipping draw call in pixelateImage.");
       }
+      setIsProcessing(false);
     }; // 正确闭合 img.onload 函数
-    
-    console.log("Setting image source...");
+
     img.src = imageSrc;
     setIsManualColoringMode(false);
     setSelectedColor(null);
@@ -1123,12 +1144,13 @@ export default function Home() {
   // 修改useEffect中的pixelateImage调用，加入模式参数
   useEffect(() => {
     if (originalImageSrc && activeBeadPalette.length > 0) {
+       setIsProcessing(true);
        const timeoutId = setTimeout(() => {
          if (originalImageSrc && originalCanvasRef.current && pixelatedCanvasRef.current && activeBeadPalette.length > 0) {
-           console.log("useEffect triggered: Processing image due to src, granularity, threshold, palette selection, mode or remap trigger.");
            pixelateImage(originalImageSrc, granularity, similarityThreshold, activeBeadPalette, pixelationMode, cleanupStrength);
          } else {
             console.warn("useEffect check failed inside timeout: Refs or active palette not ready/empty.");
+            setIsProcessing(false);
          }
        }, 50);
        return () => clearTimeout(timeoutId);
@@ -1192,9 +1214,6 @@ export default function Home() {
       
       // 检查当前URL是否不是目标域名，且不是本地开发环境
       if (!currentUrl.startsWith(targetDomain) && !isLocalhost) {
-        console.log(`当前URL: ${currentUrl}`);
-        console.log(`目标URL: ${targetDomain}`);
-        console.log('正在重定向到官方域名...');
         
         // 保留当前路径和查询参数
         const currentPath = window.location.pathname;
@@ -1215,7 +1234,6 @@ export default function Home() {
         // 执行重定向
         window.location.replace(redirectUrl);
       } else if (isLocalhost) {
-        console.log(`检测到本地开发环境 (${currentHostname})，跳过重定向`);
       }
     }
   }, []); // 只在组件首次挂载时执行
@@ -1240,7 +1258,6 @@ export default function Home() {
         const isExcluding = !currentExcluded.has(hexKey);
 
         if (isExcluding) {
-            console.log(`---------\nAttempting to EXCLUDE color: ${hexKey}`);
 
             // --- 确保初始颜色键已记录 ---
             if (initialGridColorKeys.size === 0) {
@@ -1248,8 +1265,6 @@ export default function Home() {
                 alert("无法排除颜色，初始颜色数据尚未准备好，请稍候。");
                 return;
             }
-            console.log("Initial Grid Hex Keys:", Array.from(initialGridColorKeys));
-            console.log("Currently Excluded Hex Keys (before this op):", Array.from(currentExcluded));
 
             const nextExcludedKeys = new Set(currentExcluded);
             nextExcludedKeys.add(hexKey);
@@ -1257,31 +1272,24 @@ export default function Home() {
             // --- 使用初始颜色键进行重映射目标逻辑 ---
             // 1. 从初始网格颜色集合开始（hex值）
             const potentialRemapHexKeys = new Set(initialGridColorKeys);
-            console.log("Step 1: Potential Hex Keys (from initial):", Array.from(potentialRemapHexKeys));
 
             // 2. 移除当前要排除的hex键
             potentialRemapHexKeys.delete(hexKey);
-            console.log(`Step 2: Potential Hex Keys (after removing ${hexKey}):`, Array.from(potentialRemapHexKeys));
 
             // 3. 移除任何*其他*当前也被排除的hex键
             currentExcluded.forEach(excludedHexKey => {
                 potentialRemapHexKeys.delete(excludedHexKey);
             });
-            console.log("Step 3: Potential Hex Keys (after removing other current exclusions):", Array.from(potentialRemapHexKeys));
 
             // 4. 基于剩余的hex值创建重映射调色板
-            const remapTargetPalette = fullBeadPalette.filter(color => potentialRemapHexKeys.has(color.hex.toUpperCase()));
-            const remapTargetHexKeys = remapTargetPalette.map(p => p.hex.toUpperCase());
-            console.log("Step 4: Remap Target Palette Hex Keys:", remapTargetHexKeys);
+            const remapTargetPalette = fullBeadPalette.filter(color => potentialRemapHexKeys.has(color.hex.toUpperCase()));
 
             // 5. *** 关键检查 ***：如果在考虑所有排除项后，没有*初始*颜色可供映射，则阻止此次排除
             if (remapTargetPalette.length === 0) {
                 console.warn(`Cannot exclude color '${hexKey}'. No other valid colors from the initial grid remain after considering all current exclusions.`);
                 alert(`无法排除颜色 ${hexKey}，因为图中最初存在的其他可用颜色也已被排除。请先恢复部分其他颜色。`);
-                console.log("---------");
                 return; // 停止排除过程
             }
-            console.log(`Remapping target palette (based on initial grid colors minus all exclusions) contains ${remapTargetPalette.length} colors.`);
 
             // 查找被排除颜色的RGB值用于重映射
             const excludedColorData = fullBeadPalette.find(p => p.hex.toUpperCase() === hexKey);
@@ -1289,14 +1297,11 @@ export default function Home() {
              if (!excludedColorData || !mappedPixelData || !gridDimensions) {
                  console.error("Cannot exclude color: Missing data for remapping.");
                  alert("无法排除颜色，缺少必要数据。");
-                console.log("---------");
                  return;
              }
 
-            console.log(`Remapping cells currently using excluded color: ${hexKey}`);
             // 仅在需要重映射时创建深拷贝
-            const newMappedData = mappedPixelData.map(row => row.map(cell => ({...cell})));
-            let remappedCount = 0;
+            const newMappedData = mappedPixelData.map(row => row.map(cell => ({...cell})));
             const { N, M } = gridDimensions;
             let firstReplacementHex: string | null = null;
 
@@ -1313,11 +1318,9 @@ export default function Home() {
                             key: replacementColor.key, 
                             color: replacementColor.hex 
                         };
-                    remappedCount++;
                 }
                 }
             }
-            console.log(`Remapped ${remappedCount} cells. First replacement hex found was: ${firstReplacementHex || 'N/A'}`);
 
             // 同时更新状态
             setExcludedColorKeys(nextExcludedKeys); // 应用此颜色的排除
@@ -1338,8 +1341,6 @@ export default function Home() {
             });
             setColorCounts(newCounts);
             setTotalBeadCount(newTotalCount);
-            console.log("State updated after exclusion and local remap based on initial grid colors.");
-            console.log("---------");
 
             // ++ 在更新状态后，重新绘制 Canvas ++
             if (pixelatedCanvasRef.current && gridDimensions) {
@@ -1351,14 +1352,11 @@ export default function Home() {
 
         } else {
             // --- Re-including ---
-            console.log(`---------\nAttempting to RE-INCLUDE color: ${hexKey}`);
-            console.log(`Re-including color: ${hexKey}. Triggering full remap.`);
             const nextExcludedKeys = new Set(currentExcluded);
             nextExcludedKeys.delete(hexKey);
             setExcludedColorKeys(nextExcludedKeys);
             // 此处无需重置 initialGridColorKeys，完全重映射会通过 pixelateImage 重新计算它
             setRemapTrigger(prev => prev + 1); // *** KEPT setRemapTrigger here for re-inclusion ***
-            console.log("---------");
         }
         // ++ Exit manual mode if colors are excluded/included ++
         setIsManualColoringMode(false);
@@ -1577,7 +1575,7 @@ export default function Home() {
     }
     
     // 更新状态
-    saveEditSnapshot();
+    saveEditSnapshot(newPixelData);
     setMappedPixelData(newPixelData);
 
     // 重新计算颜色统计
@@ -1617,9 +1615,9 @@ export default function Home() {
       return;
     }
 
-    // 保存快照用于撤回
-    saveEditSnapshot();
+    // 保存快照用于撤回并应用吸收结果
     const newPixelData = absorbIsland(mappedPixelData, island, target);
+    saveEditSnapshot(newPixelData);
     setMappedPixelData(newPixelData);
     showToast(`已清理 ${island.cells.length} 格杂色`);
 
@@ -1740,8 +1738,8 @@ export default function Home() {
 
         // Only update if state changes
         if (newCellData.key !== previousKey || newCellData.isExternal !== wasExternal) {
-          saveEditSnapshot();
           newPixelData[j][i] = newCellData;
+          saveEditSnapshot(newPixelData);
           setMappedPixelData(newPixelData);
 
           // Update color counts
@@ -1917,7 +1915,6 @@ export default function Home() {
           throw new Error("无效的文件格式：文件必须包含 'selectedHexValues' 数组。");
         }
 
-        console.log("检测到基于hex值的色板文件");
 
         const importedHexValues = data.selectedHexValues as string[];
         const validHexValues: string[] = [];
@@ -1944,7 +1941,6 @@ export default function Home() {
           return;
         }
 
-        console.log(`成功验证 ${validHexValues.length} 个有效的hex值`);
 
         // 基于有效的hex值创建新的selections对象
         const allHexValues = fullBeadPalette.map(color => color.hex.toUpperCase());
@@ -2080,7 +2076,7 @@ export default function Home() {
 
     if (replaceCount > 0) {
       // 更新像素数据
-      saveEditSnapshot();
+      saveEditSnapshot(newPixelData);
       setMappedPixelData(newPixelData);
 
       // 重新计算颜色统计
@@ -2106,7 +2102,6 @@ export default function Home() {
         setTotalBeadCount(newTotalCount);
       }
 
-      console.log(`颜色替换完成：将 ${replaceCount} 个 ${sourceColor.key} 替换为 ${targetColor.key}`);
     }
 
     // 退出替换模式
@@ -2465,6 +2460,7 @@ export default function Home() {
                       id="granularityInput"
                       value={granularityInput}
                       onChange={handleGranularityInputChange}
+                      onKeyDown={handleParamInputKeyDown}
                       className="w-full p-1.5 border border-gray-300 dark:border-gray-600 rounded-md text-sm focus:ring-blue-500 focus:border-blue-500 h-9 shadow-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-500"
                       min="10"
                       max="300"
@@ -2485,6 +2481,7 @@ export default function Home() {
                         id="similarityThresholdInput"
                         value={similarityThresholdInput}
                         onChange={handleSimilarityThresholdInputChange}
+                        onKeyDown={handleParamInputKeyDown}
                         className="w-full p-1.5 border border-gray-300 dark:border-gray-600 rounded-md text-sm focus:ring-blue-500 focus:border-blue-500 h-9 shadow-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-500"
                         min="0"
                         max="100"
@@ -2503,6 +2500,7 @@ export default function Home() {
                         id="cleanupStrengthInput"
                         value={cleanupStrengthInput}
                         onChange={handleCleanupStrengthInputChange}
+                        onKeyDown={handleParamInputKeyDown}
                         className="w-full p-1.5 border border-gray-300 dark:border-gray-600 rounded-md text-sm focus:ring-blue-500 focus:border-blue-500 h-9 shadow-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-500"
                         min="0"
                         max="10"
@@ -2783,7 +2781,6 @@ export default function Home() {
                                       setRemapTrigger(prev => prev + 1);
                                       setIsManualColoringMode(false);
                                       setSelectedColor(null);
-                                      console.log(`Restored color: ${hexKey}`);
                                     }}
                                     className="text-xs py-0.5 px-2 bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 rounded hover:bg-blue-200 dark:hover:bg-blue-800/40"
                                   >
@@ -2807,7 +2804,6 @@ export default function Home() {
                           setRemapTrigger(prev => prev + 1);
                           setIsManualColoringMode(false);
                           setSelectedColor(null);
-                          console.log("Restored all excluded colors");
                         }}
                         className="mt-2 w-full text-xs py-1 px-2 bg-blue-500 hover:bg-blue-600 text-white rounded transition-colors"
                       >
@@ -3004,6 +3000,16 @@ export default function Home() {
           拼豆生成 · 拼豆底稿生成器 &copy; {new Date().getFullYear()}
         </p>
       </footer>
+
+      {/* 图片处理中提示 */}
+      {isProcessing && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="flex flex-col items-center gap-3 bg-white dark:bg-gray-800 px-6 py-5 rounded-xl shadow-2xl">
+            <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+            <span className="text-sm font-medium text-gray-700 dark:text-gray-200">正在处理图片…</span>
+          </div>
+        </div>
+      )}
 
       {/* Donation Modal - 现在使用新的组件 */}
       <DonationModal isOpen={isDonationModalOpen} onClose={() => setIsDonationModalOpen(false)} />

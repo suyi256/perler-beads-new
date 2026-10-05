@@ -215,7 +215,7 @@ function calculateCellRepresentativeColor(
 
 /**
  * 根据原始图像数据、网格尺寸、调色板和模式计算像素化网格数据。
- * @param originalCtx 原始图像的 Canvas 2D Context
+ * @param fullImageData 原始图像的 ImageData（由调用方提取并缓存，避免重复读取像素）
  * @param imgWidth 原始图像宽度
  * @param imgHeight 原始图像高度
  * @param N 网格横向数量
@@ -226,7 +226,7 @@ function calculateCellRepresentativeColor(
  * @returns 计算后的 MappedPixel 网格数据
  */
 export function calculatePixelGrid(
-    originalCtx: CanvasRenderingContext2D,
+    fullImageData: ImageData,
     imgWidth: number,
     imgHeight: number,
     N: number,
@@ -235,19 +235,9 @@ export function calculatePixelGrid(
     mode: PixelationMode,
     t1FallbackColor: PaletteColor // 传入备用色
 ): MappedPixel[][] {
-    console.log(`Calculating pixel grid with mode: ${mode}`);
     const mappedData: MappedPixel[][] = Array(M).fill(null).map(() => Array(N).fill({ key: t1FallbackColor.key, color: t1FallbackColor.hex }));
     const cellWidthOriginal = imgWidth / N;
     const cellHeightOriginal = imgHeight / M;
-
-    let fullImageData: ImageData | null = null;
-    try {
-        fullImageData = originalCtx.getImageData(0, 0, imgWidth, imgHeight);
-    } catch (e) {
-        console.error("Failed to get full image data:", e);
-        // 如果无法获取图像数据，返回一个空的或默认的网格
-        return mappedData;
-    }
 
     for (let j = 0; j < M; j++) {
         for (let i = 0; i < N; i++) {
@@ -281,6 +271,5 @@ export function calculatePixelGrid(
             mappedData[j][i] = finalCellColorData;
         }
     }
-    console.log(`Pixel grid calculation complete for mode: ${mode}`);
     return mappedData;
 } 

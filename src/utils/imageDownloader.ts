@@ -101,7 +101,6 @@ export function exportCsvData({
   // 释放URL对象
   URL.revokeObjectURL(url);
   
-  console.log("CSV数据导出完成");
 }
 
 // 导入CSV hex数据的函数
@@ -408,7 +407,6 @@ export async function downloadImage({
     ctx.lineTo(downloadWidth, separatorY);
     ctx.stroke();
 
-    console.log(`Generating download grid image: ${downloadWidth}x${downloadHeight}`);
     const fontSize = Math.max(8, Math.floor(downloadCellSize * 0.4));
     
     // 如果需要，先绘制坐标轴和网格背景
@@ -717,7 +715,6 @@ export async function downloadImage({
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-      console.log("Grid image download initiated.");
       
       // 如果启用了CSV导出，同时导出CSV文件
       if (options.exportCsv) {
